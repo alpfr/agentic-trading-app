@@ -96,11 +96,10 @@ async def startup_event():
     from core.database import Base, engine
     Base.metadata.create_all(bind=engine)
 
-    # Apply day trading config overrides to the global risk manager
-    # (Conservative: 1% risk/trade, 1×ATR stop, 3% max position)
-    RISK_MANAGER = DeterministicRiskManager()
-    apply_day_trading_config(RISK_MANAGER)
-    app.state.risk_manager = RISK_MANAGER
+    # Apply day trading config to a temp instance so get_config() is seeded
+    # (run_agent_loop creates its own DeterministicRiskManager per call)
+    _rm = DeterministicRiskManager()
+    apply_day_trading_config(_rm)
     logger.info("Day trading config applied: conservative, 1% risk, 1×ATR stop")
 
     # Launch market-hours scheduler

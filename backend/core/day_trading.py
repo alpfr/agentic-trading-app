@@ -4,13 +4,11 @@ Day Trading Risk Overrides
 Patches the DeterministicRiskManager for day trading mode:
   - Tighter ATR stop multiplier (1× vs default 2×)
   - Smaller max position size (3% vs default 5%)
-  - Intraday position tracking
-  - EOD close-all logic
+  - EOD close-all logic via broker client
 """
 
 import logging
 from typing import List
-from sqlalchemy.orm import Session
 from core.database import SessionLocal, StoredPosition
 from core.watchlist import get_config
 
@@ -23,8 +21,9 @@ async def close_all_positions(broker_client) -> List[str]:
     Called by the scheduler at 15:45 ET.
     Returns list of tickers closed.
     """
+    import datetime as dt
     closed = []
-    db: Session = SessionLocal()
+    db = SessionLocal()
     try:
         open_positions = (
             db.query(StoredPosition)
@@ -38,21 +37,21 @@ async def close_all_positions(broker_client) -> List[str]:
 
         for pos in open_positions:
             try:
-                from trading_interface.events.schemas import OrderRequest, OrderSide, OrderType
-                order = OrderRequest(
-                    ticker     = pos.ticker,
-                    side       = OrderSide.SELL,
-                    quantity   = pos.shares,
-                    order_type = OrderType.MARKET,
-                    notes      = "EOD_DAY_TRADING_CLOSE",
-                )
-                await broker_client.place_order(order)
+                # Place market sell via broker if authenticated
+                if broker_client and getattr(broker_client, '_client', None):
+                    await broker_client._client.submit_order(
+                        symbol          = pos.ticker,
+                        qty             = pos.shares,
+                        side            = "sell",
+                        type            = "market",
+                        time_in_force   = "day",
+                        client_order_id = f"eod-{pos.id}",
+                    )
 
                 pos.is_open    = False
                 pos.exit_price = pos.current_price
-                pos.exit_time  = __import__('datetime').datetime.utcnow().isoformat()
+                pos.exit_time  = dt.datetime.utcnow().isoformat()
                 db.commit()
-
                 closed.append(pos.ticker)
                 logger.info(f"EOD closed: {pos.ticker} × {pos.shares} shares")
 
@@ -68,16 +67,16 @@ async def close_all_positions(broker_client) -> List[str]:
 
 def apply_day_trading_config(risk_manager) -> None:
     """
-    Patches a DeterministicRiskManager instance with day-trading parameters
-    from the current TradingConfig.
+    Patches a DeterministicRiskManager instance with conservative
+    day-trading parameters from the current TradingConfig.
     """
     config = get_config()
 
-    # Override risk parameters inline
-    risk_manager.RISK_PER_TRADE         = config.risk_per_trade      # 1%
-    risk_manager.ATR_MULTIPLIER         = config.atr_multiplier      # 1× (tight)
-    risk_manager.MAX_POSITION_PCT       = config.max_position_pct    # 3%
-    risk_manager.MAX_OPEN_POSITIONS     = config.max_open_positions   # 3
+    risk_manager.ATR_MULTIPLIER      = config.atr_multiplier       # 1.0×
+    risk_manager.MAX_POSITION_PCT    = config.max_position_pct     # 0.03
+    risk_manager.max_single_position = config.max_position_pct     # sync alias
+    risk_manager.risk_per_trade_pct  = config.risk_per_trade       # 0.01
+    risk_manager.MAX_OPEN_POSITIONS  = config.max_open_positions   # 3
 
     logger.info(
         f"Day trading config applied: risk={config.risk_per_trade*100:.0f}% "

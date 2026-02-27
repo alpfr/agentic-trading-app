@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Shield, ShieldAlert, Activity, PieChart, Info, Database, BarChart3, TrendingUp, Settings2, Play, Search, Lightbulb } from 'lucide-react';
+import { Shield, ShieldAlert, Activity, PieChart, Info, Database, BarChart3, TrendingUp, TrendingDown, Settings2, Play, PlayCircle, XCircle, Search, Lightbulb, Star } from 'lucide-react';
 import { AdvancedRealTimeChart } from "react-ts-tradingview-widgets";
 import './index.css';
 
