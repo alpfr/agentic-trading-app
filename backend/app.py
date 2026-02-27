@@ -45,6 +45,9 @@ from core.database import (
 )
 from core.portfolio_state import PortfolioState, MarketContext, PositionState
 from core.risk_gatekeeper import DeterministicRiskManager
+from core.watchlist import get_config, update_config, DEFAULT_WATCHLIST
+from core.scheduler import MarketScheduler
+from core.day_trading import close_all_positions, apply_day_trading_config
 from trading_interface.broker.alpaca_paper import AlpacaPaperBroker
 from trading_interface.broker.base import AccountSchema
 from trading_interface.events.schemas import RiskRejected, RiskApproved
@@ -84,6 +87,40 @@ MARKET_AGENT    = MarketDataAgent()   # Module-level: cache survives across requ
 # Simple in-process rate limit for /api/trigger: max 1 call per 10s per ticker
 _trigger_last_called: dict[str, float] = {}
 TRIGGER_COOLDOWN_SECONDS = 10
+
+# ---------------------------------------------------------------------------
+# Startup: init DB, apply trading config, launch scheduler
+# ---------------------------------------------------------------------------
+@app.on_event("startup")
+async def startup_event():
+    from core.database import Base, engine
+    Base.metadata.create_all(bind=engine)
+
+    # Apply day trading config overrides to the global risk manager
+    # (Conservative: 1% risk/trade, 1×ATR stop, 3% max position)
+    RISK_MANAGER = DeterministicRiskManager()
+    apply_day_trading_config(RISK_MANAGER)
+    app.state.risk_manager = RISK_MANAGER
+    logger.info("Day trading config applied: conservative, 1% risk, 1×ATR stop")
+
+    # Launch market-hours scheduler
+    async def _run_agent(ticker: str):
+        try:
+            await run_agent_loop(ticker)
+        except Exception as e:
+            logger.error(f"Scheduled agent run failed [{ticker}]: {e}")
+
+    async def _close_all():
+        await close_all_positions(BROKER_CLIENT)
+
+    scheduler = MarketScheduler(
+        run_agent_fn           = _run_agent,
+        close_all_positions_fn = _close_all,
+        get_config_fn          = get_config,
+    )
+    asyncio.create_task(scheduler.run())
+    cfg = get_config()
+    logger.info(f"Scheduler running — watchlist: {cfg.watchlist}, interval: {cfg.scan_interval_minutes}min")
 
 # ---------------------------------------------------------------------------
 # Helper: DB Audit Logging
@@ -413,6 +450,73 @@ async def fetch_movers():
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch movers: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Watchlist & Config endpoints
+# ---------------------------------------------------------------------------
+@app.get("/api/watchlist", dependencies=[Depends(require_api_key)])
+async def get_watchlist():
+    """Return current watchlist and trading config."""
+    cfg = get_config()
+    return {
+        "watchlist":             cfg.watchlist,
+        "style":                 cfg.style,
+        "risk_profile":          cfg.risk_profile,
+        "risk_per_trade_pct":    cfg.risk_per_trade * 100,
+        "atr_multiplier":        cfg.atr_multiplier,
+        "max_position_pct":      cfg.max_position_pct * 100,
+        "max_open_positions":    cfg.max_open_positions,
+        "scan_interval_minutes": cfg.scan_interval_minutes,
+        "eod_close_time_et":     cfg.eod_close_time_et,
+    }
+
+
+@app.put("/api/watchlist", dependencies=[Depends(require_api_key)])
+async def set_watchlist(payload: dict):
+    """
+    Update watchlist tickers.
+    Body: { "tickers": ["AAOI", "BWIN", "DELL", "FIGS", "SSL"] }
+    """
+    raw = payload.get("tickers", [])
+    tickers = []
+    for t in raw:
+        clean = sanitize_ticker(t)
+        if clean:
+            tickers.append(clean)
+    if not tickers:
+        raise HTTPException(status_code=400, detail="No valid tickers provided")
+    update_config(watchlist=tickers)
+    return {"watchlist": tickers, "message": f"Watchlist updated: {tickers}"}
+
+
+@app.post("/api/watchlist/scan", dependencies=[Depends(require_api_key)])
+async def scan_watchlist(background_tasks: BackgroundTasks):
+    """
+    Immediately trigger an agent loop for every ticker in the watchlist.
+    Returns immediately; scans run in background.
+    """
+    cfg = get_config()
+    triggered = []
+    for ticker in cfg.watchlist:
+        background_tasks.add_task(run_agent_loop, ticker)
+        triggered.append(ticker)
+    return {
+        "message":   f"Scanning {len(triggered)} tickers",
+        "tickers":   triggered,
+        "style":     cfg.style,
+        "risk":      cfg.risk_profile,
+    }
+
+
+@app.post("/api/watchlist/close-all", dependencies=[Depends(require_api_key)])
+async def close_all_endpoint():
+    """Manually trigger EOD close of all open positions."""
+    closed = await close_all_positions(BROKER_CLIENT)
+    return {
+        "message": f"Closed {len(closed)} positions",
+        "tickers": closed,
+    }
 
 
 @app.get("/api/logs", dependencies=[Depends(require_api_key)])

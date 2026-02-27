@@ -24,6 +24,10 @@ export default function App() {
   // State driven by SSE stream
   const [accountValue, setAccountValue] = useState(0);
   const [positions, setPositions] = useState([]);
+  const [watchlist, setWatchlist] = useState(['AAOI', 'BWIN', 'DELL', 'FIGS', 'SSL']);
+  const [watchlistData, setWatchlistData] = useState({});
+  const [watchlistScanning, setWatchlistScanning] = useState(false);
+  const [tradingConfig, setTradingConfig] = useState(null);
   const [auditLogs, setAuditLogs] = useState([]);
   const [agentInsights, setAgentInsights] = useState([]);
   const [connected, setConnected] = useState(false);
@@ -93,10 +97,17 @@ export default function App() {
     fetchMovers();
     const moversInterval = setInterval(fetchMovers, 60000);
 
+    fetchWatchlistConfig();
+    watchlist.forEach(t => fetchQuoteForTicker(t));
+    const watchlistInterval = setInterval(() => {
+      watchlist.forEach(t => fetchQuoteForTicker(t));
+    }, 30000);
+
     return () => {
       sseRef.current?.close();
       clearInterval(marketInterval);
       clearInterval(moversInterval);
+      clearInterval(watchlistInterval);
     };
   }, []);
 
@@ -111,6 +122,40 @@ export default function App() {
     } catch { alert('Failed to fetch quote.'); }
     setQuoteLoading(false);
   };
+
+  async function fetchWatchlistConfig() {
+    try {
+      const r = await fetch(`${API_BASE}/api/watchlist`, { headers: AUTH_HEADERS });
+      if (r.ok) { const d = await r.json(); setTradingConfig(d); setWatchlist(d.watchlist || []); }
+    } catch (e) { console.error('Watchlist config fetch failed', e); }
+  }
+
+  async function fetchQuoteForTicker(ticker) {
+    try {
+      const r = await fetch(`${API_BASE}/api/quote/${ticker}`, { headers: AUTH_HEADERS });
+      if (r.ok) {
+        const d = await r.json();
+        setWatchlistData(prev => ({ ...prev, [ticker]: d }));
+      }
+    } catch (e) {}
+  }
+
+  async function scanAllWatchlist() {
+    setWatchlistScanning(true);
+    try {
+      await fetch(`${API_BASE}/api/watchlist/scan`, { method: 'POST', headers: AUTH_HEADERS });
+      setTimeout(() => setWatchlistScanning(false), 5000);
+    } catch (e) { setWatchlistScanning(false); }
+  }
+
+  async function closeAllPositions() {
+    if (!window.confirm('Close ALL open positions now?')) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/watchlist/close-all`, { method: 'POST', headers: AUTH_HEADERS });
+      const d = await r.json();
+      alert(d.message);
+    } catch (e) { alert('Close-all failed: ' + e.message); }
+  }
 
   async function fetchMovers() {
     setMoversLoading(true);
@@ -171,8 +216,9 @@ export default function App() {
         </div>
 
         <div style={{ flex: 1, padding: '16px 12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <SidebarButton active={activeTab === 'dashboard'} icon={<PieChart />} label="Portfolio & Risk" onClick={() => setActiveTab('dashboard')} />
-          <SidebarButton active={activeTab === 'insights'}  icon={<Lightbulb />} label="AI Insights"      onClick={() => setActiveTab('insights')} />
+          <SidebarButton active={activeTab === 'dashboard'} icon={<PieChart />}    label="Portfolio & Risk" onClick={() => setActiveTab('dashboard')} />
+          <SidebarButton active={activeTab === 'watchlist'} icon={<Star />}       label="My Watchlist"     onClick={() => setActiveTab('watchlist')} />
+          <SidebarButton active={activeTab === 'insights'}  icon={<Lightbulb />}  label="AI Insights"      onClick={() => setActiveTab('insights')} />
           <SidebarButton active={activeTab === 'movers'}    icon={<TrendingUp />} label="Market Movers"    onClick={() => setActiveTab('movers')} />
           <SidebarButton active={activeTab === 'quote'}     icon={<Search />}    label="Quote Lookup"     onClick={() => setActiveTab('quote')} />
           <SidebarButton active={activeTab === 'audit'}     icon={<Database />}  label="Audit Journal"    onClick={() => setActiveTab('audit')} />
@@ -228,6 +274,127 @@ export default function App() {
             </div>
           </div>
         </header>
+
+        {activeTab === 'watchlist' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 700 }}>⭐ My Watchlist</h2>
+                <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>
+                  Day trading · Conservative · 1% risk/trade · 1×ATR stop · EOD auto-close 15:45 ET
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button onClick={scanAllWatchlist} disabled={watchlistScanning}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: watchlistScanning ? 'not-allowed' : 'pointer', opacity: watchlistScanning ? 0.7 : 1 }}>
+                  <PlayCircle size={16} /> {watchlistScanning ? 'Scanning...' : 'Scan All Now'}
+                </button>
+                <button onClick={closeAllPositions}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', background: 'var(--danger-bg)', color: 'var(--danger)', border: '1px solid var(--danger)', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}>
+                  <XCircle size={16} /> Close All
+                </button>
+              </div>
+            </div>
+
+            {/* Ticker cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+              {watchlist.map(ticker => {
+                const d = watchlistData[ticker];
+                const price = d?.price || d?.regularMarketPrice || null;
+                const changePct = d?.change_pct ?? d?.regularMarketChangePercent ?? null;
+                const positive = changePct >= 0;
+                const color = changePct === null ? 'var(--text-muted)' : positive ? 'var(--success)' : 'var(--danger)';
+                const openPos = positions.find(p => p.ticker === ticker);
+                return (
+                  <div key={ticker} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '12px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {/* Ticker header */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div>
+                        <div style={{ fontSize: '22px', fontWeight: 800, letterSpacing: '-0.5px' }}>{ticker}</div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>{d?.name || d?.shortName || '—'}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '20px', fontWeight: 700, fontFamily: 'monospace' }}>
+                          {price ? `$${price.toFixed(2)}` : '—'}
+                        </div>
+                        {changePct !== null && (
+                          <div style={{ color, fontSize: '13px', fontWeight: 600 }}>
+                            {positive ? '▲' : '▼'} {Math.abs(changePct).toFixed(2)}%
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Metrics row */}
+                    {d && (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px' }}>
+                        {d.volume && <div style={{ color: 'var(--text-muted)' }}>Vol: <span style={{ color: 'var(--text)' }}>{d.volume >= 1e6 ? (d.volume/1e6).toFixed(1)+'M' : d.volume >= 1e3 ? (d.volume/1e3).toFixed(0)+'K' : d.volume}</span></div>}
+                        {d.atr_14 && <div style={{ color: 'var(--text-muted)' }}>ATR: <span style={{ color: 'var(--text)' }}>${d.atr_14?.toFixed(2)}</span></div>}
+                        {d.sma_20 && <div style={{ color: 'var(--text-muted)' }}>SMA20: <span style={{ color: price > d.sma_20 ? 'var(--success)' : 'var(--danger)' }}>${d.sma_20?.toFixed(2)}</span></div>}
+                        {d.sma_50 && <div style={{ color: 'var(--text-muted)' }}>SMA50: <span style={{ color: price > d.sma_50 ? 'var(--success)' : 'var(--danger)' }}>${d.sma_50?.toFixed(2)}</span></div>}
+                      </div>
+                    )}
+
+                    {/* Open position badge */}
+                    {openPos && (
+                      <div style={{ background: 'rgba(79,70,229,0.1)', border: '1px solid var(--primary)', borderRadius: '8px', padding: '8px 12px', fontSize: '12px' }}>
+                        <div style={{ fontWeight: 700, color: 'var(--primary)', marginBottom: '4px' }}>📊 Open Position</div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span>{openPos.shares} shares @ ${openPos.entry?.toFixed(2)}</span>
+                          <span style={{ color: (openPos.current - openPos.entry) >= 0 ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }}>
+                            {((openPos.current - openPos.entry) / openPos.entry * 100).toFixed(2)}%
+                          </span>
+                        </div>
+                        {openPos.stop && <div style={{ color: 'var(--danger)', marginTop: '2px' }}>Stop: ${openPos.stop?.toFixed(2)}</div>}
+                      </div>
+                    )}
+
+                    {/* Action buttons */}
+                    <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
+                      <button onClick={() => { setQuoteTicker(ticker); setActiveTab('quote'); }}
+                        style={{ flex: 1, padding: '7px', background: 'transparent', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' }}>
+                        Quote
+                      </button>
+                      <button onClick={async () => {
+                          const r = await fetch(`${API_BASE}/api/trigger`, { method: 'POST', headers: { ...AUTH_HEADERS, 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker }) });
+                          const d = await r.json();
+                          alert(`${ticker}: ${d.result || d.detail || 'Agent triggered'}`);
+                        }}
+                        style={{ flex: 2, padding: '7px', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
+                        Run Agent
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Config panel */}
+            {tradingConfig && (
+              <div style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '12px', padding: '20px' }}>
+                <div style={{ fontWeight: 700, marginBottom: '12px', fontSize: '15px' }}>⚙️ Active Trading Config</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '12px', fontSize: '13px' }}>
+                  {[
+                    ['Style', tradingConfig.style],
+                    ['Risk Profile', tradingConfig.risk_profile],
+                    ['Risk/Trade', tradingConfig.risk_per_trade_pct?.toFixed(1) + '%'],
+                    ['ATR Stop', tradingConfig.atr_multiplier + '×'],
+                    ['Max Position', tradingConfig.max_position_pct?.toFixed(0) + '%'],
+                    ['Max Open', tradingConfig.max_open_positions],
+                    ['Scan Interval', tradingConfig.scan_interval_minutes + ' min'],
+                    ['EOD Close', tradingConfig.eod_close_time_et + ' ET'],
+                  ].map(([label, val]) => (
+                    <div key={label} style={{ background: 'var(--bg)', borderRadius: '8px', padding: '10px 12px' }}>
+                      <div style={{ color: 'var(--text-muted)', fontSize: '11px', marginBottom: '2px' }}>{label}</div>
+                      <div style={{ fontWeight: 600 }}>{val}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {activeTab === 'dashboard' && (
           <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px' }}>

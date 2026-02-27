@@ -27,9 +27,12 @@ class DeterministicRiskManager:
         self.max_daily_loss      = 0.03   # 3% intraday circuit breaker
 
         # Position sizing constraints
-        self.max_single_position = 0.05   # 5% max equity per ticker
+        self.max_single_position = 0.05   # 5% max equity per ticker (overridable)
         self.max_sector_exposure = 0.20   # 20% max sector correlation risk
-        self.risk_per_trade_pct  = 0.01   # Risk exactly 1% of equity per trade
+        self.risk_per_trade_pct  = 0.01   # Risk 1% of equity per trade (overridable)
+        self.ATR_MULTIPLIER      = 2.0    # Stop = ATR × multiplier (day trading: 1.0)
+        self.MAX_POSITION_PCT    = 0.05   # Overridden by day trading config
+        self.MAX_OPEN_POSITIONS  = 10     # Max concurrent open positions
 
         # Liquidity & macro filters
         self.min_daily_volume       = 5_000_000  # 5M ADV floor
@@ -159,7 +162,11 @@ class DeterministicRiskManager:
             raise HardConstraintViolation("DATA_ERROR", "ATR or price is zero/negative.")
 
         risk_dollars       = portfolio.total_equity * self.risk_per_trade_pct
-        stop_loss_distance = 2.0 * market.atr_14
+        # Sync overridable aliases before every sizing calculation
+        self.max_single_position = self.MAX_POSITION_PCT
+        self.risk_per_trade_pct  = getattr(self, 'RISK_PER_TRADE', self.risk_per_trade_pct)
+
+        stop_loss_distance = self.ATR_MULTIPLIER * market.atr_14
         raw_shares         = int(risk_dollars // stop_loss_distance)
 
         if raw_shares == 0:
