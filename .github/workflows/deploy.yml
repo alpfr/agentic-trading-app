@@ -342,52 +342,11 @@ jobs:
       - name: Resolve ACM certificate ARN
         id: acm
         run: |
-          # Auto-resolve the ACM cert ARN for opssightai.com
+          # Use pinned ARN (*.opssightai.com wildcard cert, us-east-1)
           # Override by setting ACM_CERT_ARN in GitHub Secrets.
-          if [ -n "${{ secrets.ACM_CERT_ARN }}" ]; then
-            echo "cert_arn=${{ secrets.ACM_CERT_ARN }}" >> $GITHUB_OUTPUT
-            echo "Using manually set ACM_CERT_ARN secret"
-          else
-            # Step 1: exact wildcard primary domain
-            CERT_ARN=$(aws acm list-certificates \
-              --region "$AWS_REGION" \
-              --query "CertificateSummaryList[?DomainName=='*.opssightai.com' && Status=='ISSUED'].CertificateArn" \
-              --output text | awk '{print $1}')
-
-            # Step 2: wildcard as a SAN (primary domain is opssightai.com, SAN is *.opssightai.com)
-            if [ -z "$CERT_ARN" ]; then
-              ALL_ARNS=$(aws acm list-certificates \
-                --region "$AWS_REGION" \
-                --query "CertificateSummaryList[?Status=='ISSUED'].CertificateArn" \
-                --output text)
-              for ARN in $ALL_ARNS; do
-                COVERS=$(aws acm describe-certificate \
-                  --certificate-arn "$ARN" \
-                  --region "$AWS_REGION" \
-                  --query "Certificate.SubjectAlternativeNames" \
-                  --output text)
-                if echo "$COVERS" | grep -q "\*.opssightai.com"; then
-                  CERT_ARN="$ARN"
-                  echo "Found wildcard as SAN in cert: $ARN"
-                  break
-                fi
-              done
-            fi
-
-            # Step 3: any issued cert covering the root domain
-            if [ -z "$CERT_ARN" ]; then
-              CERT_ARN=$(aws acm list-certificates \
-                --region "$AWS_REGION" \
-                --query "CertificateSummaryList[?contains(DomainName,'opssightai.com') && Status=='ISSUED'].CertificateArn" \
-                --output text | awk '{print $1}')
-            fi
-            if [ -z "$CERT_ARN" ]; then
-              echo "::error::No issued ACM certificate found for opssightai.com. Set ACM_CERT_ARN in GitHub Secrets."
-              exit 1
-            fi
-            echo "cert_arn=$CERT_ARN" >> $GITHUB_OUTPUT
-            echo "Resolved ACM cert: $CERT_ARN"
-          fi
+          CERT_ARN="${{ secrets.ACM_CERT_ARN || 'arn:aws:acm:us-east-1:713220200108:certificate/7a263fe4-a8d5-47cc-a361-8b0a85a4c29e' }}"
+          echo "cert_arn=$CERT_ARN" >> $GITHUB_OUTPUT
+          echo "Using cert: $CERT_ARN"
 
       - name: Generate deployment manifest
         env:

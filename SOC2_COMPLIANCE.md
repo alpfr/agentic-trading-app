@@ -56,7 +56,7 @@ ACM **auto-renews** certificates 60 days before expiry as long as the DNS valida
 Verify renewal eligibility:
 ```bash
 aws acm describe-certificate \
-  --certificate-arn <cert-arn> \
+  --certificate-arn arn:aws:acm:us-east-1:713220200108:certificate/7a263fe4-a8d5-47cc-a361-8b0a85a4c29e \
   --region us-east-1 \
   --query "Certificate.{Status:Status,RenewalEligibility:RenewalEligibility}" \
   --output table
@@ -78,7 +78,7 @@ aws acm request-certificate \
 
 # 3. Get the validation CNAME immediately
 aws acm describe-certificate \
-  --certificate-arn <new-arn> \
+  --certificate-arn arn:aws:acm:us-east-1:713220200108:certificate/7a263fe4-a8d5-47cc-a361-8b0a85a4c29e \
   --region us-east-1 \
   --query "Certificate.DomainValidationOptions[0].ResourceRecord" \
   --output table
@@ -103,7 +103,7 @@ aws route53 change-resource-record-sets \
   }"
 
 # 5. Wait for ISSUED (2–5 min on Route 53)
-aws acm describe-certificate --certificate-arn <new-arn> \
+aws acm describe-certificate --certificate-arn arn:aws:acm:us-east-1:713220200108:certificate/7a263fe4-a8d5-47cc-a361-8b0a85a4c29e \
   --region us-east-1 --query "Certificate.Status" --output text
 ```
 

@@ -139,14 +139,14 @@ aws acm list-certificates --region us-east-1 \
 
 # Full cert details (SANs, status, renewal eligibility)
 aws acm describe-certificate \
-  --certificate-arn <cert-arn> \
+  --certificate-arn arn:aws:acm:us-east-1:713220200108:certificate/7a263fe4-a8d5-47cc-a361-8b0a85a4c29e \
   --region us-east-1 \
   --query "Certificate.{Status:Status,SANs:SubjectAlternativeNames,Renewal:RenewalEligibility}" \
   --output table
 
 # Get validation CNAME (if PENDING_VALIDATION)
 aws acm describe-certificate \
-  --certificate-arn <cert-arn> \
+  --certificate-arn arn:aws:acm:us-east-1:713220200108:certificate/7a263fe4-a8d5-47cc-a361-8b0a85a4c29e \
   --region us-east-1 \
   --query "Certificate.DomainValidationOptions[0].ResourceRecord" \
   --output table

@@ -58,7 +58,7 @@ If the cert status is `PENDING_VALIDATION`, add the DNS CNAME validation record:
 ```bash
 # Get the validation record
 aws acm describe-certificate \
-  --certificate-arn <cert-arn> \
+  --certificate-arn arn:aws:acm:us-east-1:713220200108:certificate/7a263fe4-a8d5-47cc-a361-8b0a85a4c29e \
   --region us-east-1 \
   --query "Certificate.DomainValidationOptions[0].ResourceRecord" \
   --output table
@@ -68,12 +68,12 @@ ZONE_ID=$(aws route53 list-hosted-zones \
   --query "HostedZones[?Name=='opssightai.com.'].Id" \
   --output text | cut -d'/' -f3)
 
-NAME=$(aws acm describe-certificate --certificate-arn <cert-arn> \
+NAME=$(aws acm describe-certificate --certificate-arn arn:aws:acm:us-east-1:713220200108:certificate/7a263fe4-a8d5-47cc-a361-8b0a85a4c29e \
   --region us-east-1 \
   --query "Certificate.DomainValidationOptions[0].ResourceRecord.Name" \
   --output text)
 
-VALUE=$(aws acm describe-certificate --certificate-arn <cert-arn> \
+VALUE=$(aws acm describe-certificate --certificate-arn arn:aws:acm:us-east-1:713220200108:certificate/7a263fe4-a8d5-47cc-a361-8b0a85a4c29e \
   --region us-east-1 \
   --query "Certificate.DomainValidationOptions[0].ResourceRecord.Value" \
   --output text)
@@ -95,7 +95,7 @@ aws route53 change-resource-record-sets \
 
 Validation takes 2–5 minutes on Route 53. Check status:
 ```bash
-aws acm describe-certificate --certificate-arn <cert-arn> \
+aws acm describe-certificate --certificate-arn arn:aws:acm:us-east-1:713220200108:certificate/7a263fe4-a8d5-47cc-a361-8b0a85a4c29e \
   --region us-east-1 \
   --query "Certificate.Status" --output text
 ```
