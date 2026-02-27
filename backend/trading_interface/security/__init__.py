@@ -10,6 +10,7 @@ Replaces the single-static-API-key model with:
   - CORS locked to CORS_ALLOWED_ORIGINS env var (no localhost default in prod)
 """
 
+import bcrypt as _bcrypt_lib
 from starlette.middleware.base import BaseHTTPMiddleware
 import os
 import re
@@ -36,7 +37,7 @@ _ACCESS_TTL_MIN  = int(os.getenv("JWT_ACCESS_TTL_MINUTES", "15"))
 _REFRESH_TTL_DAYS= int(os.getenv("JWT_REFRESH_TTL_DAYS",  "7"))
 _MFA_ISSUER      = os.getenv("MFA_ISSUER", "RetirementAdvisor")
 _ADMIN_USERNAME  = os.getenv("ADMIN_USERNAME", "admin")
-# Admin password hash — use passlib.hash.bcrypt.hash("<password>") to generate
+# Admin password hash — generated via /api/setup/hash-password endpoint
 _ADMIN_PASS_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")
 # Admin TOTP secret — generated once, stored in K8s secret
 _ADMIN_TOTP_KEY  = os.getenv("ADMIN_TOTP_SECRET", "")
@@ -142,16 +143,14 @@ def verify_totp(code: str, secret: Optional[str] = None) -> bool:
 
 def verify_password(plain: str, hashed: str) -> bool:
     try:
-        from passlib.hash import bcrypt
-        return bcrypt.verify(plain, hashed)
+        return _bcrypt_lib.checkpw(plain.encode(), hashed.encode())
     except Exception as e:
         logger.error(f"AUTH | password_verify_error | {e}")
         return False
 
 
 def hash_password(plain: str) -> str:
-    from passlib.hash import bcrypt
-    return bcrypt.hash(plain)
+    return _bcrypt_lib.hashpw(plain.encode(), _bcrypt_lib.gensalt()).decode()
 
 
 # ══════════════════════════════════════════════════════════════════════════
