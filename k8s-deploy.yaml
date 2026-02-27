@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentic-trading-backend
+  labels:
+    app: agentic-trading-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agentic-trading-backend
+  template:
+    metadata:
+      labels:
+        app: agentic-trading-backend
+    spec:
+      containers:
+      - name: backend
+        image: 713220200108.dkr.ecr.us-east-1.amazonaws.com/agentic-trading-backend:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+        env:
+        # Without an API key, the system defaults to deterministic mocking logic
+        - name: OPENAI_API_KEY
+          value: ""
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentic-trading-backend
+spec:
+  selector:
+    app: agentic-trading-backend
+  ports:
+  - protocol: TCP
+    port: 8000
+    targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentic-trading-frontend
+  labels:
+    app: agentic-trading-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agentic-trading-frontend
+  template:
+    metadata:
+      labels:
+        app: agentic-trading-frontend
+    spec:
+      containers:
+      - name: frontend
+        image: 713220200108.dkr.ecr.us-east-1.amazonaws.com/agentic-trading-frontend:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentic-trading-frontend
+spec:
+  selector:
+    app: agentic-trading-frontend
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: agentic-trading-ingress
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: agentic-trading-backend
+            port:
+              number: 8000
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: agentic-trading-frontend
+            port:
+              number: 80
