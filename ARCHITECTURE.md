@@ -7,7 +7,7 @@ The Agentic Trading Application is designed following a modular, multi-agent arc
 ### 1. Frontend (React / Vite)
 
 - The user interface is composed of a Single Page Application (SPA) built with React and bundled via Vite.
-- Connects asynchronously to the Python backend to poll for `GLOBAL_POSITIONS`, `GLOBAL_AUDIT_LOGS`, and `GLOBAL_AGENT_INSIGHTS`.
+- Connects asynchronously to the Python backend to poll for `PortfolioPosition`, `AuditLog`, and `AgentInsight` database models.
 - **Key Features:**
   - Real-time Portfolio Dashboard with interactive PnL tables.
   - "Market Movers" interface parsing live Yahoo Finance metrics.

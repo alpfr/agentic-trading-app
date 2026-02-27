@@ -29,14 +29,14 @@ pip install -r requirements.txt # Fastapi, uvicorn, pydantic, openai, yfinance, 
 
 Create a `.env` file from `.env.example` and add:
 
-```
+```env
 OPENAI_API_KEY="sk-..."
 ```
 
 Start the server:
 
 ```bash
-uvicorn app:app --reload --port 8002
+uvicorn app:app --reload --port 8100
 ```
 
 ### Frontend (React / Vite)
