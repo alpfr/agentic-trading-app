@@ -24,7 +24,11 @@ export default function App() {
   // State driven by SSE stream
   const [accountValue, setAccountValue] = useState(0);
   const [positions, setPositions] = useState([]);
-  const [watchlist, setWatchlist] = useState(['AAOI', 'BWIN', 'DELL', 'FIGS', 'SSL']);
+  const [watchlist, setWatchlist] = useState(['VTI','SCHD','DGRO','QQQ','JNJ','KO','PG','ABBV','VZ','MSFT','AAPL','NVDA','GOOGL','AMZN']);
+  const [rebalanceReport, setRebalanceReport] = useState(null);
+  const [dividends, setDividends] = useState(null);
+  const [alerts, setAlerts] = useState([]);
+  const [tradingStyle, setTradingStyle] = useState('retirement');
   const [watchlistData, setWatchlistData] = useState({});
   const [watchlistScanning, setWatchlistScanning] = useState(false);
   const [tradingConfig, setTradingConfig] = useState(null);
@@ -99,6 +103,11 @@ export default function App() {
 
     fetchWatchlistConfig();
     watchlist.forEach(t => fetchQuoteForTicker(t));
+    fetchRebalance();
+    fetchDividends();
+    fetchAlerts();
+    const rebalInterval = setInterval(fetchRebalance, 300000);  // every 5 min
+    const alertInterval = setInterval(fetchAlerts, 120000);     // every 2 min
     const watchlistInterval = setInterval(() => {
       watchlist.forEach(t => fetchQuoteForTicker(t));
     }, 30000);
@@ -108,6 +117,8 @@ export default function App() {
       clearInterval(marketInterval);
       clearInterval(moversInterval);
       clearInterval(watchlistInterval);
+      clearInterval(rebalInterval);
+      clearInterval(alertInterval);
     };
   }, []);
 
@@ -155,6 +166,27 @@ export default function App() {
       const d = await r.json();
       alert(d.message);
     } catch (e) { alert('Close-all failed: ' + e.message); }
+  }
+
+  async function fetchRebalance() {
+    try {
+      const r = await fetch(`${API_BASE}/api/rebalance`, { headers: AUTH_HEADERS });
+      if (r.ok) setRebalanceReport(await r.json());
+    } catch (e) { console.error('Rebalance fetch failed', e); }
+  }
+
+  async function fetchDividends() {
+    try {
+      const r = await fetch(`${API_BASE}/api/dividends`, { headers: AUTH_HEADERS });
+      if (r.ok) setDividends(await r.json());
+    } catch (e) { console.error('Dividends fetch failed', e); }
+  }
+
+  async function fetchAlerts() {
+    try {
+      const r = await fetch(`${API_BASE}/api/alerts`, { headers: AUTH_HEADERS });
+      if (r.ok) { const d = await r.json(); setAlerts(d.alerts || []); }
+    } catch (e) { console.error('Alerts fetch failed', e); }
   }
 
   async function fetchMovers() {
@@ -216,14 +248,14 @@ export default function App() {
         </div>
 
         <div style={{ flex: 1, padding: '16px 12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <SidebarButton active={activeTab === 'dashboard'} icon={<PieChart />}    label="Portfolio & Risk" onClick={() => setActiveTab('dashboard')} />
-          <SidebarButton active={activeTab === 'watchlist'} icon={<Star />}       label="My Watchlist"     onClick={() => setActiveTab('watchlist')} />
-          <SidebarButton active={activeTab === 'insights'}  icon={<Lightbulb />}  label="AI Insights"      onClick={() => setActiveTab('insights')} />
-          <SidebarButton active={activeTab === 'movers'}    icon={<TrendingUp />} label="Market Movers"    onClick={() => setActiveTab('movers')} />
-          <SidebarButton active={activeTab === 'quote'}     icon={<Search />}    label="Quote Lookup"     onClick={() => setActiveTab('quote')} />
-          <SidebarButton active={activeTab === 'audit'}     icon={<Database />}  label="Audit Journal"    onClick={() => setActiveTab('audit')} />
-          <SidebarButton active={activeTab === 'market'}    icon={<BarChart3 />} label="Market History DB" onClick={() => setActiveTab('market')} />
-          <SidebarButton active={activeTab === 'settings'}  icon={<Settings2 />} label="Constraints"      onClick={() => setActiveTab('settings')} />
+          <SidebarButton active={activeTab === 'dashboard'}  icon={<PieChart />}    label="Portfolio"       onClick={() => setActiveTab('dashboard')} />
+          <SidebarButton active={activeTab === 'watchlist'}  icon={<Star />}        label="Watchlist"       onClick={() => setActiveTab('watchlist')} />
+          <SidebarButton active={activeTab === 'rebalance'}  icon={<BarChart3 />}   label="Rebalancing"     onClick={() => setActiveTab('rebalance')} />
+          <SidebarButton active={activeTab === 'dividends'}  icon={<TrendingUp />}  label="Dividends"       onClick={() => setActiveTab('dividends')} />
+          <SidebarButton active={activeTab === 'alerts'}     icon={<Lightbulb />}   label="Alerts"          onClick={() => { setActiveTab('alerts'); fetchAlerts(); }} />
+          <SidebarButton active={activeTab === 'insights'}   icon={<Search />}      label="AI Advisor"      onClick={() => setActiveTab('insights')} />
+          <SidebarButton active={activeTab === 'audit'}      icon={<Database />}    label="Audit Log"       onClick={() => setActiveTab('audit')} />
+          <SidebarButton active={activeTab === 'quote'}      icon={<Settings2 />}   label="Research"        onClick={() => setActiveTab('quote')} />
         </div>
 
         <div style={{ padding: '24px', borderTop: '1px solid var(--border)', background: 'rgba(255,255,255,0.01)' }}>
@@ -584,9 +616,168 @@ export default function App() {
           </div>
         )}
 
+        {/* ── REBALANCING TAB ─────────────────────────── */}
+        {activeTab === 'rebalance' && (
+          <div className="animate-fade-in" style={{ padding: '24px', maxWidth: '1100px', margin: '0 auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <div>
+                <h2 style={{ fontSize: '22px', fontWeight: 700, marginBottom: '4px' }}>Portfolio Rebalancing</h2>
+                <p style={{ color: 'var(--text-dark)', fontSize: '14px' }}>Target allocations vs current holdings — drift threshold: {rebalanceReport?.drift_threshold_pct?.toFixed(0)}%</p>
+              </div>
+              <button onClick={fetchRebalance} className="btn-primary" style={{ fontSize: '13px', padding: '8px 16px' }}>Refresh</button>
+            </div>
+            {rebalanceReport ? (
+              <>
+                <div style={{ padding: '14px 20px', borderRadius: '10px', marginBottom: '24px',
+                  background: rebalanceReport.needs_rebalancing ? 'rgba(251,191,36,0.1)' : 'rgba(34,197,94,0.1)',
+                  border: `1px solid ${rebalanceReport.needs_rebalancing ? '#fbbf24' : '#22c55e'}` }}>
+                  <p style={{ fontWeight: 600, color: rebalanceReport.needs_rebalancing ? '#fbbf24' : '#22c55e' }}>
+                    {rebalanceReport.needs_rebalancing ? '⚠️ Rebalancing Recommended' : '✅ Portfolio On Target'}
+                  </p>
+                  <p style={{ color: 'var(--text-dark)', fontSize: '13px', marginTop: '4px' }}>{rebalanceReport.summary}</p>
+                </div>
+                {rebalanceReport.buys?.length > 0 && (
+                  <div style={{ marginBottom: '24px' }}>
+                    <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#22c55e', marginBottom: '12px' }}>📈 Increase Position</h3>
+                    <div style={{ display: 'grid', gap: '10px' }}>
+                      {rebalanceReport.buys.map(b => (
+                        <div key={b.ticker} className="glass-panel" style={{ padding: '14px 18px', display: 'grid', gridTemplateColumns: '80px 1fr 1fr 1fr 100px', alignItems: 'center', gap: '16px' }}>
+                          <span style={{ fontWeight: 700, fontSize: '15px' }}>{b.ticker}</span>
+                          <span style={{ fontSize: '13px', color: 'var(--text-dark)' }}>Current: <strong style={{ color: 'var(--text)' }}>{b.current_pct.toFixed(1)}%</strong> → Target: <strong style={{ color: '#22c55e' }}>{b.target_pct.toFixed(1)}%</strong></span>
+                          <span style={{ fontSize: '13px', color: 'var(--text-dark)' }}>Gap: <strong style={{ color: '#22c55e' }}>${b.gap_value.toLocaleString(undefined, {maximumFractionDigits:0})}</strong></span>
+                          <span style={{ fontSize: '13px', color: 'var(--text-dark)' }}>~{b.shares_to_trade} shares @ ${b.current_price}</span>
+                          <span style={{ fontSize: '12px', fontWeight: 600, padding: '4px 10px', borderRadius: '6px', background: 'rgba(34,197,94,0.15)', color: '#22c55e', textAlign: 'center' }}>BUY</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {rebalanceReport.sells?.length > 0 && (
+                  <div style={{ marginBottom: '24px' }}>
+                    <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#ef4444', marginBottom: '12px' }}>📉 Trim Position</h3>
+                    <div style={{ display: 'grid', gap: '10px' }}>
+                      {rebalanceReport.sells.map(s => (
+                        <div key={s.ticker} className="glass-panel" style={{ padding: '14px 18px', display: 'grid', gridTemplateColumns: '80px 1fr 1fr 1fr 100px', alignItems: 'center', gap: '16px' }}>
+                          <span style={{ fontWeight: 700, fontSize: '15px' }}>{s.ticker}</span>
+                          <span style={{ fontSize: '13px', color: 'var(--text-dark)' }}>Current: <strong style={{ color: '#ef4444' }}>{s.current_pct.toFixed(1)}%</strong> → Target: <strong>{s.target_pct.toFixed(1)}%</strong></span>
+                          <span style={{ fontSize: '13px', color: 'var(--text-dark)' }}>Excess: <strong style={{ color: '#ef4444' }}>${Math.abs(s.gap_value).toLocaleString(undefined, {maximumFractionDigits:0})}</strong></span>
+                          <span style={{ fontSize: '13px', color: 'var(--text-dark)' }}>~{s.shares_to_trade} shares @ ${s.current_price}</span>
+                          <span style={{ fontSize: '12px', fontWeight: 600, padding: '4px 10px', borderRadius: '6px', background: 'rgba(239,68,68,0.15)', color: '#ef4444', textAlign: 'center' }}>TRIM</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {rebalanceReport.holds?.length > 0 && (
+                  <div>
+                    <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-dark)', marginBottom: '12px' }}>✓ On Target</h3>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                      {rebalanceReport.holds.map(h => (
+                        <span key={h.ticker} style={{ padding: '6px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', fontSize: '13px' }}>
+                          {h.ticker} <span style={{ color: 'var(--text-dark)' }}>{h.current_pct.toFixed(1)}%</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '60px', color: 'var(--text-dark)' }}>Loading rebalance report...</div>
+            )}
+          </div>
+        )}
+
+        {/* ── DIVIDENDS TAB ───────────────────────────── */}
+        {activeTab === 'dividends' && (
+          <div className="animate-fade-in" style={{ padding: '24px', maxWidth: '900px', margin: '0 auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <div>
+                <h2 style={{ fontSize: '22px', fontWeight: 700, marginBottom: '4px' }}>Dividend Income</h2>
+                <p style={{ color: 'var(--text-dark)', fontSize: '14px' }}>Projected income from current paper holdings</p>
+              </div>
+              {dividends && (
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '28px', fontWeight: 700, color: '#22c55e' }}>${dividends.total_annual_income?.toLocaleString(undefined, {minimumFractionDigits:2})}</div>
+                  <div style={{ fontSize: '13px', color: 'var(--text-dark)' }}>est. annual · ${dividends.total_monthly_income?.toFixed(2)}/mo</div>
+                </div>
+              )}
+            </div>
+            {dividends?.dividends?.length > 0 ? (
+              <div style={{ display: 'grid', gap: '10px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '80px 80px 80px 80px 90px 100px 100px', gap: '16px', padding: '8px 20px', fontSize: '11px', fontWeight: 600, color: 'var(--text-dark)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  <span>Ticker</span><span>Yield</span><span>Per Share</span><span>Payout</span><span>Shares</span><span>Annual</span><span>Health</span>
+                </div>
+                {dividends.dividends.map(d => (
+                  <div key={d.ticker} className="glass-panel" style={{ padding: '14px 20px', display: 'grid', gridTemplateColumns: '80px 80px 80px 80px 90px 100px 100px', alignItems: 'center', gap: '16px' }}>
+                    <span style={{ fontWeight: 700, fontSize: '15px' }}>{d.ticker}</span>
+                    <span style={{ fontWeight: 600, color: '#22c55e' }}>{d.yield_pct.toFixed(2)}%</span>
+                    <span>${d.annual_div_rate.toFixed(2)}</span>
+                    <span style={{ color: d.payout_ratio > 85 ? '#ef4444' : d.payout_ratio > 65 ? '#fbbf24' : 'var(--text)' }}>{d.payout_ratio.toFixed(0)}%</span>
+                    <span>{d.shares_held}</span>
+                    <span style={{ color: '#22c55e', fontWeight: 600 }}>${d.annual_income.toFixed(2)}</span>
+                    <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '5px', textAlign: 'center',
+                      color: d.div_health === 'AT_RISK' ? '#ef4444' : d.div_health === 'WATCH' ? '#fbbf24' : d.div_health === 'HEALTHY' ? '#22c55e' : 'var(--text-dark)',
+                      background: d.div_health === 'AT_RISK' ? 'rgba(239,68,68,0.12)' : d.div_health === 'WATCH' ? 'rgba(251,191,36,0.12)' : d.div_health === 'HEALTHY' ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.05)',
+                    }}>{d.div_health}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '60px', color: 'var(--text-dark)' }}>
+                {dividends ? 'No dividend data yet — scans populate this after market open.' : 'Loading...'}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── ALERTS TAB ──────────────────────────────── */}
+        {activeTab === 'alerts' && (
+          <div className="animate-fade-in" style={{ padding: '24px', maxWidth: '900px', margin: '0 auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <div>
+                <h2 style={{ fontSize: '22px', fontWeight: 700, marginBottom: '4px' }}>Portfolio Alerts</h2>
+                <p style={{ color: 'var(--text-dark)', fontSize: '14px' }}>Price drops, dividend risks, rebalancing triggers, valuation warnings</p>
+              </div>
+              <button onClick={fetchAlerts} className="btn-primary" style={{ fontSize: '13px', padding: '8px 16px' }}>Refresh</button>
+            </div>
+            {alerts.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '60px', color: 'var(--text-dark)' }}>
+                <div style={{ fontSize: '40px', marginBottom: '12px' }}>✅</div>
+                <p style={{ fontWeight: 600 }}>No active alerts</p>
+                <p style={{ fontSize: '13px', marginTop: '8px' }}>Alerts generate after daily agent scans. Check back after market open.</p>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: '12px' }}>
+                {alerts.map((a, i) => (
+                  <div key={i} className="glass-panel" style={{ padding: '16px 20px', borderLeft: `4px solid ${a.level === 'ACTION' ? '#22c55e' : a.level === 'WARNING' ? '#fbbf24' : '#64748b'}` }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px' }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+                          <span style={{ fontWeight: 700, fontSize: '15px' }}>{a.ticker}</span>
+                          <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px',
+                            color: a.level === 'ACTION' ? '#22c55e' : a.level === 'WARNING' ? '#fbbf24' : 'var(--text-dark)',
+                            background: a.level === 'ACTION' ? 'rgba(34,197,94,0.12)' : a.level === 'WARNING' ? 'rgba(251,191,36,0.12)' : 'rgba(255,255,255,0.05)',
+                          }}>{a.level}</span>
+                          <span style={{ fontSize: '11px', color: 'var(--text-dark)' }}>{a.category?.replace('_', ' ')}</span>
+                        </div>
+                        <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '6px' }}>{a.title}</div>
+                        <div style={{ fontSize: '13px', color: 'var(--text-dark)', lineHeight: 1.6 }}>{a.message}</div>
+                      </div>
+                      <span style={{ fontSize: '11px', fontWeight: 700, padding: '6px 12px', borderRadius: '6px', whiteSpace: 'nowrap',
+                        color: a.suggested_action === 'BUY_OPPORTUNITY' ? '#22c55e' : a.suggested_action === 'TRIM' ? '#ef4444' : '#fbbf24',
+                        background: a.suggested_action === 'BUY_OPPORTUNITY' ? 'rgba(34,197,94,0.12)' : a.suggested_action === 'TRIM' ? 'rgba(239,68,68,0.12)' : 'rgba(251,191,36,0.12)',
+                      }}>{a.suggested_action?.replace(/_/g, ' ')}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <footer style={{ marginTop: '48px', padding: '24px', borderTop: '1px solid var(--border)', textAlign: 'center' }}>
           <p style={{ fontSize: '12px', color: 'var(--text-dark)', maxWidth: '800px', margin: '0 auto', lineHeight: 1.6 }}>
-            NOT FINANCIAL ADVICE. Do not use with real capital without extensive professional review.
+            RETIREMENT RESEARCH TOOL — NOT FINANCIAL ADVICE. Keep actual retirement savings in a tax-advantaged account (401k/IRA/Roth IRA). This tool is for research and paper trading only.
           </p>
         </footer>
       </main>

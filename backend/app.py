@@ -1,5 +1,5 @@
 """
-Agentic Trading App — FastAPI Backend
+Agentic Trading App — Retirement Portfolio Advisor
 ======================================
 Fixes applied vs. original:
   - All endpoints protected by X-API-Key authentication
@@ -45,9 +45,12 @@ from core.database import (
 )
 from core.portfolio_state import PortfolioState, MarketContext, PositionState
 from core.risk_gatekeeper import DeterministicRiskManager
-from core.watchlist import get_config, update_config, DEFAULT_WATCHLIST
+from core.watchlist import get_config, update_config, DEFAULT_WATCHLIST, TARGET_ALLOCATIONS
 from core.scheduler import MarketScheduler
-from core.day_trading import close_all_positions, apply_day_trading_config
+from core.retirement_config import apply_retirement_config
+from core.rebalancer import compute_rebalance, rebalance_report_to_dict
+from core.alerts import generate_portfolio_alerts
+from agents.fundamental import fetch_fundamentals
 from trading_interface.reconciliation.job import SyncWorker
 from trading_interface.broker.alpaca_paper import AlpacaPaperBroker
 from trading_interface.broker.base import AccountSchema
@@ -105,9 +108,9 @@ async def startup_event():
     from core.database import Base, engine
     Base.metadata.create_all(bind=engine)
 
-    # Fix #5: patch the module-level RISK_MANAGER singleton (not a throwaway)
-    apply_day_trading_config(RISK_MANAGER)
-    logger.info("Day trading config applied to RISK_MANAGER singleton: 1% risk, 1×ATR stop, 3% max pos")
+    # Apply retirement portfolio config to the RISK_MANAGER singleton
+    apply_retirement_config(RISK_MANAGER)
+    logger.info("Retirement config applied: 3% per buy, 10% max position, 25% max sector")
 
     # Launch market-hours scheduler
     async def _run_agent(ticker: str):
@@ -117,7 +120,7 @@ async def startup_event():
             logger.error(f"Scheduled agent run failed [{ticker}]: {e}")
 
     async def _close_all():
-        await close_all_positions(BROKER_CLIENT)
+        pass  # Retirement: no EOD auto-close; positions are held long-term
 
     scheduler = MarketScheduler(
         run_agent_fn           = _run_agent,
@@ -326,9 +329,11 @@ async def run_agent_loop(ticker: str):
         _price_db.close()
 
     # 2. Strategy agent
-    technicals  = await MARKET_AGENT.generate_technical_summary_string(ticker, live_context)
-    sentiment   = await MARKET_AGENT.fetch_news_and_sentiment(ticker)
-    fundamentals = await MARKET_AGENT.fetch_fundamentals(ticker)
+    technicals   = await MARKET_AGENT.generate_technical_summary_string(ticker, live_context)
+    sentiment    = await MARKET_AGENT.fetch_news_and_sentiment(ticker)
+    # Retirement: use dedicated fundamental agent (P/E, dividend, FCF, moat)
+    fund_data    = await fetch_fundamentals(ticker)
+    fundamentals = fund_data["summary"]
 
     api_key = os.getenv("OPENAI_API_KEY")
     strategy = (
@@ -367,7 +372,8 @@ async def run_agent_loop(ticker: str):
     # 3. Risk evaluation — uses the module-level RISK_MANAGER singleton
     # (already configured with day trading params via apply_day_trading_config at startup)
     portfolio     = await _build_portfolio_state()
-    risk_result   = RISK_MANAGER.evaluate_signal(signal, portfolio, live_context)
+    # Pass raw fundamentals for retirement risk gates (P/E, payout ratio)
+    risk_result   = RISK_MANAGER.evaluate_signal(signal, portfolio, live_context, fund_data)
 
     if isinstance(risk_result, RiskRejected):
         log_audit("REJECTED", "RiskManager", ticker,
@@ -561,15 +567,19 @@ async def get_watchlist():
     """Return current watchlist and trading config."""
     cfg = get_config()
     return {
-        "watchlist":             cfg.watchlist,
-        "style":                 cfg.style,
-        "risk_profile":          cfg.risk_profile,
-        "risk_per_trade_pct":    cfg.risk_per_trade * 100,
-        "atr_multiplier":        cfg.atr_multiplier,
-        "max_position_pct":      cfg.max_position_pct * 100,
-        "max_open_positions":    cfg.max_open_positions,
-        "scan_interval_minutes": cfg.scan_interval_minutes,
-        "eod_close_time_et":     cfg.eod_close_time_et,
+        "watchlist":               cfg.watchlist,
+        "target_allocations":      {t: round(v*100,1) for t,v in cfg.target_allocations.items()},
+        "style":                   cfg.style,
+        "risk_profile":            cfg.risk_profile,
+        "horizon_years":           cfg.horizon_years,
+        "position_size_pct":       cfg.position_size_pct * 100,
+        "max_single_stock_pct":    cfg.max_single_stock_pct * 100,
+        "max_sector_pct":          cfg.max_sector_pct * 100,
+        "rebalance_frequency":     cfg.rebalance_frequency,
+        "rebalance_drift_threshold": cfg.rebalance_drift_threshold * 100,
+        "scan_interval_hours":     cfg.scan_interval_hours,
+        "auto_close_eod":          cfg.auto_close_eod,
+        "order_type":              cfg.order_type,
     }
 
 
@@ -613,11 +623,191 @@ async def scan_watchlist(background_tasks: BackgroundTasks):
 @app.post("/api/watchlist/close-all", dependencies=[Depends(require_api_key)])
 async def close_all_endpoint():
     """Manually trigger EOD close of all open positions."""
-    closed = await close_all_positions(BROKER_CLIENT)
+    # For retirement: manual close-all means rebalance-sells, not EOD close
+    closed = []  # Manual rebalancing is done via /api/rebalance, not auto-close
     return {
         "message": f"Closed {len(closed)} positions",
         "tickers": closed,
     }
+
+
+# ---------------------------------------------------------------------------
+# Retirement Portfolio Endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/rebalance", dependencies=[Depends(require_api_key)])
+async def get_rebalance_report():
+    """
+    Compute current portfolio drift vs target allocations.
+    Returns suggested BUY/SELL trades to restore balance.
+    """
+    db = SessionLocal()
+    try:
+        open_positions = db.query(StoredPosition).filter(StoredPosition.is_open == True).all()
+        positions_list = [
+            {
+                "ticker":       p.ticker,
+                "shares":       p.shares,
+                "current_price": p.current_price,
+                "market_value": p.shares * p.current_price,
+            }
+            for p in open_positions
+        ]
+
+        try:
+            account    = await BROKER_CLIENT.get_account()
+            total_value = account.portfolio_value
+        except Exception:
+            total_value = sum(p["market_value"] for p in positions_list) or 100_000.0
+
+        cfg = get_config()
+        report = compute_rebalance(
+            current_positions=positions_list,
+            target_allocations=cfg.target_allocations,
+            total_portfolio_value=total_value,
+            drift_threshold=cfg.rebalance_drift_threshold,
+        )
+        return rebalance_report_to_dict(report)
+    finally:
+        db.close()
+
+
+@app.get("/api/alerts", dependencies=[Depends(require_api_key)])
+async def get_portfolio_alerts():
+    """
+    Generate current portfolio alerts:
+    price drops, dividend risk, valuation extremes, rebalancing triggers.
+    """
+    cfg = get_config()
+    all_alerts = []
+
+    # Get rebalance report for drift alerts
+    db = SessionLocal()
+    try:
+        open_positions = db.query(StoredPosition).filter(StoredPosition.is_open == True).all()
+        positions_map  = {p.ticker: p for p in open_positions}
+        try:
+            account = await BROKER_CLIENT.get_account()
+            total_value = account.portfolio_value
+        except Exception:
+            total_value = sum(p.shares * p.current_price for p in open_positions) or 100_000.0
+    finally:
+        db.close()
+
+    for ticker in cfg.watchlist:
+        try:
+            # Get latest market data from DB
+            mdb = SessionLocal()
+            market_row = (
+                mdb.query(StoredMarketData)
+                .filter(StoredMarketData.ticker == ticker)
+                .order_by(StoredMarketData.timestamp.desc())
+                .first()
+            )
+            mdb.close()
+
+            current_price = (market_row.current_price if market_row else 0) or 0
+            week52_high   = None
+            sma_20        = market_row.sma_20 if market_row else None
+
+            fund_data = await fetch_fundamentals(ticker)
+            raw       = fund_data.get("raw", {})
+            week52_high = raw.get("week52_high")
+
+            # Rebalance drift
+            pos = positions_map.get(ticker)
+            current_value = (pos.shares * pos.current_price) if pos else 0
+            target_pct    = cfg.target_allocations.get(ticker, 0)
+            current_pct   = current_value / total_value if total_value else 0
+            drift_pct     = (current_pct - target_pct) * 100
+            gap_value     = (target_pct - current_pct) * total_value
+
+            ticker_alerts = generate_portfolio_alerts(
+                ticker=ticker,
+                fundamentals=fund_data,
+                current_price=current_price,
+                week52_high=week52_high,
+                sma_20=sma_20,
+                drift_pct=drift_pct,
+                gap_value=gap_value,
+                drift_threshold=cfg.rebalance_drift_threshold * 100,
+            )
+            all_alerts.extend([a.to_dict() for a in ticker_alerts])
+        except Exception as e:
+            logger.warning(f"Alert generation failed for {ticker}: {e}")
+
+    # Sort: ACTION > WARNING > INFO
+    level_order = {"ACTION": 0, "WARNING": 1, "INFO": 2}
+    all_alerts.sort(key=lambda a: level_order.get(a["level"], 3))
+
+    return {"alerts": all_alerts, "count": len(all_alerts)}
+
+
+@app.get("/api/dividends", dependencies=[Depends(require_api_key)])
+async def get_dividend_summary():
+    """
+    Dividend income summary for retirement portfolio holdings.
+    Returns annual income, yield, next ex-div dates.
+    """
+    cfg = get_config()
+    db  = SessionLocal()
+    try:
+        open_positions = db.query(StoredPosition).filter(StoredPosition.is_open == True).all()
+        positions_map  = {p.ticker: p for p in open_positions}
+    finally:
+        db.close()
+
+    dividends = []
+    total_annual_income = 0.0
+
+    for ticker in cfg.watchlist:
+        fund_data = await fetch_fundamentals(ticker)
+        raw       = fund_data.get("raw", {})
+
+        div_rate  = raw.get("div_rate") or 0.0
+        div_yield = raw.get("div_yield") or 0.0
+        payout    = raw.get("payout_ratio") or 0.0
+
+        pos = positions_map.get(ticker)
+        shares_held   = pos.shares if pos else 0
+        annual_income = div_rate * shares_held
+
+        total_annual_income += annual_income
+
+        if div_yield > 0 or shares_held > 0:
+            dividends.append({
+                "ticker":        ticker,
+                "annual_div_rate": round(div_rate, 4),
+                "yield_pct":     round(div_yield * 100, 2),
+                "payout_ratio":  round(payout * 100, 1),
+                "shares_held":   shares_held,
+                "annual_income": round(annual_income, 2),
+                "monthly_income": round(annual_income / 12, 2),
+                "div_health":    (
+                    "AT_RISK" if payout > 0.85
+                    else "WATCH" if payout > 0.65
+                    else "HEALTHY" if div_yield > 0
+                    else "N/A"
+                ),
+            })
+
+    dividends.sort(key=lambda d: d["annual_income"], reverse=True)
+
+    return {
+        "dividends":            dividends,
+        "total_annual_income":  round(total_annual_income, 2),
+        "total_monthly_income": round(total_annual_income / 12, 2),
+    }
+
+
+@app.get("/api/fundamentals/{ticker}", dependencies=[Depends(require_api_key)])
+async def get_fundamentals(ticker: str):
+    """Full fundamental data for a single ticker."""
+    clean = sanitize_ticker(ticker)
+    if not clean:
+        raise HTTPException(status_code=400, detail="Invalid ticker")
+    data = await fetch_fundamentals(clean)
+    return {"ticker": clean, "summary": data["summary"], "raw": data["raw"]}
 
 
 @app.get("/api/logs", dependencies=[Depends(require_api_key)])

@@ -49,18 +49,18 @@ class ExecutionAgent:
         idempotency_key = uuid.uuid4() 
         # Ideally, look up existing idempotency bounds in Redis tied to signal_id
         
-        # Day trading: MARKET orders with DAY time-in-force.
-        # MARKET ensures intraday fill; DAY ensures orders expire at close
-        # rather than carrying over overnight (GTC would break EOD close logic).
+        # Retirement investing: LIMIT orders with DAY time-in-force.
+        # LIMIT avoids overpaying on entry (risk manager sets limit 0.5% below ask).
+        # DAY ensures unfilled orders expire at close rather than carrying overnight.
         order = OrderRequest(
             internal_order_id=internal_id,
             idempotency_key=idempotency_key,
             ticker=risk_event.ticker,
             action=risk_event.action[:3],  # BUY_TO_OPEN → BUY, SELL_TO_CLOSE → SEL
-            order_type="MARKET",
+            order_type="LIMIT",
             time_in_force="DAY",
             quantity=risk_event.approved_quantity,
-            limit_price=None,  # Not used for MARKET orders
+            limit_price=risk_event.approved_limit_price,
         )
 
         logger.info(f"Submitting OrderRequest {order.internal_order_id} (IdemKey: {order.idempotency_key})")
