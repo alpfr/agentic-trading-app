@@ -348,12 +348,33 @@ jobs:
             echo "cert_arn=${{ secrets.ACM_CERT_ARN }}" >> $GITHUB_OUTPUT
             echo "Using manually set ACM_CERT_ARN secret"
           else
-            # Prefer wildcard cert (*.opssightai.com) — falls back to any issued cert for the domain
+            # Step 1: exact wildcard primary domain
             CERT_ARN=$(aws acm list-certificates \
               --region "$AWS_REGION" \
               --query "CertificateSummaryList[?DomainName=='*.opssightai.com' && Status=='ISSUED'].CertificateArn" \
               --output text | awk '{print $1}')
-            # Fallback: any issued cert covering opssightai.com
+
+            # Step 2: wildcard as a SAN (primary domain is opssightai.com, SAN is *.opssightai.com)
+            if [ -z "$CERT_ARN" ]; then
+              ALL_ARNS=$(aws acm list-certificates \
+                --region "$AWS_REGION" \
+                --query "CertificateSummaryList[?Status=='ISSUED'].CertificateArn" \
+                --output text)
+              for ARN in $ALL_ARNS; do
+                COVERS=$(aws acm describe-certificate \
+                  --certificate-arn "$ARN" \
+                  --region "$AWS_REGION" \
+                  --query "Certificate.SubjectAlternativeNames" \
+                  --output text)
+                if echo "$COVERS" | grep -q "\*.opssightai.com"; then
+                  CERT_ARN="$ARN"
+                  echo "Found wildcard as SAN in cert: $ARN"
+                  break
+                fi
+              done
+            fi
+
+            # Step 3: any issued cert covering the root domain
             if [ -z "$CERT_ARN" ]; then
               CERT_ARN=$(aws acm list-certificates \
                 --region "$AWS_REGION" \
