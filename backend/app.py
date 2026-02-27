@@ -152,7 +152,7 @@ async def startup_event():
     )
     asyncio.create_task(scheduler.run())
     cfg = get_config()
-    logger.info(f"Scheduler running — watchlist: {cfg.watchlist}, interval: {cfg.scan_interval_minutes}min")
+    logger.info(f"Scheduler running — watchlist: {cfg.watchlist}, interval: {cfg.scan_interval_hours}hr")
 
     # Fix #4: SyncWorker — periodic broker reconciliation wired into production
     # Runs every 5 minutes; keeps internal DB aligned with Alpaca as source of truth
@@ -628,16 +628,16 @@ async def get_watchlist():
         "watchlist":               cfg.watchlist,
         "target_allocations":      {t: round(v*100,1) for t,v in cfg.target_allocations.items()},
         "style":                   cfg.style,
-        "risk_profile":            cfg.risk_profile,
+        "paper_only":              cfg.paper_only,
         "horizon_years":           cfg.horizon_years,
-        "position_size_pct":       cfg.position_size_pct * 100,
-        "max_single_stock_pct":    cfg.max_single_stock_pct * 100,
-        "max_sector_pct":          cfg.max_sector_pct * 100,
-        "rebalance_frequency":     cfg.rebalance_frequency,
-        "rebalance_drift_threshold": cfg.rebalance_drift_threshold * 100,
+        "position_size_pct":       cfg.risk_per_trade_pct * 100,
+        "max_single_stock_pct":    cfg.max_single_position_pct * 100,
+        "max_position_pct":        cfg.max_single_position_pct * 100,
+        "rebalance_check_day":     cfg.rebalance_check_day,
+        "rebalance_drift_trigger": cfg.rebalance_drift_trigger * 100,
         "scan_interval_hours":     cfg.scan_interval_hours,
-        "auto_close_eod":          cfg.auto_close_eod,
-        "order_type":              cfg.order_type,
+        "min_hold_days":           cfg.min_hold_days,
+        "trailing_stop_pct":       cfg.trailing_stop_pct * 100,
     }
 
 
