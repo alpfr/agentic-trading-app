@@ -1,3 +1,22 @@
+# =============================================================================
+# Agentic Trading App — Kubernetes Manifests
+# =============================================================================
+#
+# SECRETS: Create required secrets before applying:
+#
+#   kubectl create secret generic trading-app-secrets \
+#     --from-literal=openai-api-key="sk-..." \
+#     --from-literal=alpaca-api-key="PK..." \
+#     --from-literal=alpaca-secret-key="..." \
+#     --from-literal=app-api-key="$(openssl rand -hex 32)" \
+#     --from-literal=database-url="postgresql://user:pass@rds-host:5432/trading"
+#
+# IMAGE: Replace <AWS_ACCOUNT_ID> and <REGION> at deploy time via CI/CD.
+#        Never commit real account IDs to source control.
+#        Example with envsubst:  envsubst < k8s-deploy.yaml | kubectl apply -f -
+# =============================================================================
+
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -5,7 +24,7 @@ metadata:
   labels:
     app: agentic-trading-backend
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: agentic-trading-backend
@@ -16,14 +35,74 @@ spec:
     spec:
       containers:
       - name: backend
-        image: 713220200108.dkr.ecr.us-east-1.amazonaws.com/agentic-trading-backend:latest
+        # Replace with your ECR URI via envsubst or Helm values — never hardcode account ID.
+        image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/agentic-trading-backend:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 8000
+
+        # --- Resource Limits (prevents OOMKilled cascade on noisy neighbours) ---
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+
         env:
-        # Without an API key, the system defaults to deterministic mocking logic
+        # CORS: comma-separated list of allowed frontend origins
+        - name: CORS_ALLOWED_ORIGINS
+          value: "https://your-frontend-domain.com"
+
+        # --- All secrets via Kubernetes Secret (never plaintext values) ---
         - name: OPENAI_API_KEY
-          value: ""
+          valueFrom:
+            secretKeyRef:
+              name: trading-app-secrets
+              key: openai-api-key
+
+        - name: ALPACA_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: trading-app-secrets
+              key: alpaca-api-key
+
+        - name: ALPACA_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: trading-app-secrets
+              key: alpaca-secret-key
+
+        - name: APP_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: trading-app-secrets
+              key: app-api-key
+
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: trading-app-secrets
+              key: database-url
+
+        # --- K8s Health Probes ---
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 3
+
 ---
 apiVersion: v1
 kind: Service
@@ -37,6 +116,7 @@ spec:
     port: 8000
     targetPort: 8000
   type: ClusterIP
+
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -45,7 +125,7 @@ metadata:
   labels:
     app: agentic-trading-frontend
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: agentic-trading-frontend
@@ -56,10 +136,33 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: 713220200108.dkr.ecr.us-east-1.amazonaws.com/agentic-trading-frontend:latest
+        image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/agentic-trading-frontend:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 80
+
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "250m"
+            memory: "256Mi"
+
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 15
+
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+
 ---
 apiVersion: v1
 kind: Service
@@ -73,6 +176,7 @@ spec:
     port: 80
     targetPort: 80
   type: ClusterIP
+
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -82,6 +186,8 @@ metadata:
     kubernetes.io/ingress.class: alb
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
+    # WAF rate limiting — attach your WAF ACL ARN here
+    # alb.ingress.kubernetes.io/wafv2-acl-arn: arn:aws:wafv2:...
 spec:
   rules:
   - http:
