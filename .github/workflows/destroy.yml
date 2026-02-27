@@ -1,0 +1,65 @@
+name: Destroy EKS Cluster
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DESTROY to confirm teardown of all resources'
+        required: true
+
+env:
+  AWS_REGION:    us-east-1
+  CLUSTER_NAME:  agentic-trading-cluster
+  NAMESPACE:     agentic-trading-platform
+
+jobs:
+  destroy:
+    name: Tear Down EKS Infrastructure
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirm == 'DESTROY'
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Install eksctl
+        run: |
+          EKSCTL_VERSION=$(curl -sL https://api.github.com/repos/eksctl-io/eksctl/releases/latest \
+            | grep '"tag_name"' | cut -d'"' -f4)
+          curl -sL "https://github.com/eksctl-io/eksctl/releases/download/${EKSCTL_VERSION}/eksctl_Linux_amd64.tar.gz" \
+            | tar xz -C /tmp
+          sudo mv /tmp/eksctl /usr/local/bin/
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "v1.29.0"
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION" || true
+
+      - name: Delete ingress (removes ALB)
+        run: |
+          kubectl delete ingress agentic-trading-ingress -n "$NAMESPACE" --ignore-not-found
+          echo "Waiting 60s for ALB to be deprovisioned..."
+          sleep 60
+
+      - name: Delete namespace
+        run: kubectl delete namespace "$NAMESPACE" --ignore-not-found
+
+      - name: Delete EKS cluster
+        run: |
+          eksctl delete cluster \
+            --name "$CLUSTER_NAME" \
+            --region "$AWS_REGION" \
+            --wait
+          echo "Cluster deleted"
+
+      - name: Summary
+        run: |
+          echo "### Infrastructure Destroyed 🗑️" >> $GITHUB_STEP_SUMMARY
+          echo "Cluster \`$CLUSTER_NAME\` and all associated resources have been removed." >> $GITHUB_STEP_SUMMARY
