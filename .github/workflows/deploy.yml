@@ -348,10 +348,18 @@ jobs:
             echo "cert_arn=${{ secrets.ACM_CERT_ARN }}" >> $GITHUB_OUTPUT
             echo "Using manually set ACM_CERT_ARN secret"
           else
+            # Prefer wildcard cert (*.opssightai.com) — falls back to any issued cert for the domain
             CERT_ARN=$(aws acm list-certificates \
               --region "$AWS_REGION" \
-              --query "CertificateSummaryList[?contains(DomainName,'opssightai.com') && Status=='ISSUED'].CertificateArn" \
+              --query "CertificateSummaryList[?DomainName=='*.opssightai.com' && Status=='ISSUED'].CertificateArn" \
               --output text | awk '{print $1}')
+            # Fallback: any issued cert covering opssightai.com
+            if [ -z "$CERT_ARN" ]; then
+              CERT_ARN=$(aws acm list-certificates \
+                --region "$AWS_REGION" \
+                --query "CertificateSummaryList[?contains(DomainName,'opssightai.com') && Status=='ISSUED'].CertificateArn" \
+                --output text | awk '{print $1}')
+            fi
             if [ -z "$CERT_ARN" ]; then
               echo "::error::No issued ACM certificate found for opssightai.com. Set ACM_CERT_ARN in GitHub Secrets."
               exit 1
