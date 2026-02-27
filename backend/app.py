@@ -48,6 +48,7 @@ from core.risk_gatekeeper import DeterministicRiskManager
 from core.watchlist import get_config, update_config, DEFAULT_WATCHLIST
 from core.scheduler import MarketScheduler
 from core.day_trading import close_all_positions, apply_day_trading_config
+from trading_interface.reconciliation.job import SyncWorker
 from trading_interface.broker.alpaca_paper import AlpacaPaperBroker
 from trading_interface.broker.base import AccountSchema
 from trading_interface.events.schemas import RiskRejected, RiskApproved
@@ -64,6 +65,8 @@ logging.basicConfig(
 # ---------------------------------------------------------------------------
 # App & Middleware
 # ---------------------------------------------------------------------------
+logger = logging.getLogger("app")
+
 app = FastAPI(title="Agentic Trading App API", version="1.1.0")
 
 _cors_origins = os.getenv(
@@ -84,6 +87,12 @@ app.add_middleware(
 BROKER_CLIENT   = AlpacaPaperBroker()
 MARKET_AGENT    = MarketDataAgent()   # Module-level: cache survives across requests
 
+# Fix #5: RISK_MANAGER is a module-level singleton so apply_day_trading_config()
+# patches the SAME instance that run_agent_loop() uses on every call.
+# Previously a fresh DeterministicRiskManager() was created inside run_agent_loop(),
+# discarding all config overrides (ATR multiplier, position cap, etc.)
+RISK_MANAGER    = DeterministicRiskManager()
+
 # Simple in-process rate limit for /api/trigger: max 1 call per 10s per ticker
 _trigger_last_called: dict[str, float] = {}
 TRIGGER_COOLDOWN_SECONDS = 10
@@ -96,11 +105,9 @@ async def startup_event():
     from core.database import Base, engine
     Base.metadata.create_all(bind=engine)
 
-    # Apply day trading config to a temp instance so get_config() is seeded
-    # (run_agent_loop creates its own DeterministicRiskManager per call)
-    _rm = DeterministicRiskManager()
-    apply_day_trading_config(_rm)
-    logger.info("Day trading config applied: conservative, 1% risk, 1×ATR stop")
+    # Fix #5: patch the module-level RISK_MANAGER singleton (not a throwaway)
+    apply_day_trading_config(RISK_MANAGER)
+    logger.info("Day trading config applied to RISK_MANAGER singleton: 1% risk, 1×ATR stop, 3% max pos")
 
     # Launch market-hours scheduler
     async def _run_agent(ticker: str):
@@ -120,6 +127,25 @@ async def startup_event():
     asyncio.create_task(scheduler.run())
     cfg = get_config()
     logger.info(f"Scheduler running — watchlist: {cfg.watchlist}, interval: {cfg.scan_interval_minutes}min")
+
+    # Fix #4: SyncWorker — periodic broker reconciliation wired into production
+    # Runs every 5 minutes; keeps internal DB aligned with Alpaca as source of truth
+    async def _run_reconciliation_loop():
+        await asyncio.sleep(120)   # Wait 2 min after startup before first reconcile
+        while True:
+            try:
+                if BROKER_CLIENT._client:   # Only reconcile if broker is authenticated
+                    worker = SyncWorker(
+                        broker=BROKER_CLIENT,
+                        portfolio_db_client=None,  # uses direct DB access below
+                    )
+                    await _reconcile_positions_with_broker()
+            except Exception as e:
+                logger.error(f"Reconciliation error: {e}")
+            await asyncio.sleep(300)   # Every 5 minutes
+
+    asyncio.create_task(_run_reconciliation_loop())
+    logger.info("Reconciliation loop started (every 5 min)")
 
 # ---------------------------------------------------------------------------
 # Helper: DB Audit Logging
@@ -189,6 +215,63 @@ async def _build_portfolio_state() -> PortfolioState:
 
 
 # ---------------------------------------------------------------------------
+# Fix #4: Broker Reconciliation — DB positions vs Alpaca source of truth
+# ---------------------------------------------------------------------------
+async def _reconcile_positions_with_broker() -> None:
+    """
+    Compares open positions in our DB against live Alpaca positions.
+    - Prices updated to broker reality every 5 minutes
+    - Positions closed at broker but still open in DB are marked closed
+    - Drift > 5% of portfolio triggers a warning log (not a kill switch in paper mode)
+    """
+    try:
+        broker_positions = await BROKER_CLIENT.get_positions()
+        account          = await BROKER_CLIENT.get_account()
+        total_equity     = account.portfolio_value or 1.0
+    except Exception as e:
+        logger.warning(f"Reconciliation skipped — broker unreachable: {e}")
+        return
+
+    broker_map = {p.ticker: p for p in broker_positions}
+
+    db = SessionLocal()
+    try:
+        db_open = db.query(StoredPosition).filter(StoredPosition.is_open == True).all()
+        updated, closed = 0, 0
+
+        for pos in db_open:
+            if pos.ticker in broker_map:
+                bp = broker_map[pos.ticker]
+                # Update current price from broker (fix #1 — live PnL)
+                true_price = bp.market_value / bp.quantity if bp.quantity else pos.current_price
+                drift_pct  = abs(true_price - pos.current_price) / (pos.current_price or 1)
+
+                if drift_pct > 0.05:
+                    logger.warning(f"RECONCILE: {pos.ticker} price drifted {drift_pct*100:.1f}%"
+                                   f" — DB ${pos.current_price:.2f} → Broker ${true_price:.2f}")
+
+                pos.current_price = round(true_price, 4)
+                pos.shares        = bp.quantity        # Qty may differ after partial fills
+                updated += 1
+            else:
+                # Position closed at broker (EOD fill, manual close, etc.) — mark closed in DB
+                pos.is_open   = False
+                pos.closed_at = __import__('datetime').datetime.utcnow()
+                log_audit("RECONCILED_CLOSE", "SyncWorker", pos.ticker,
+                          f"Position not found at broker — marked closed (was {pos.shares} shares)")
+                closed += 1
+
+        db.commit()
+        if updated or closed:
+            logger.info(f"Reconciliation: {updated} prices updated, {closed} positions closed")
+    except Exception as e:
+        logger.error(f"Reconciliation DB error: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
 # Core Agent Loop
 # ---------------------------------------------------------------------------
 async def run_agent_loop(ticker: str):
@@ -220,8 +303,27 @@ async def run_agent_loop(ticker: str):
 
     if live_context.avg_daily_volume == 0:
         log_audit("FAILED", "MarketDataAgent", ticker, "Invalid ticker or yfinance API error.")
+        return  # No point running strategy on bad data
     else:
         log_audit("SYNCED", "MarketDataAgent", ticker, f"Price=${live_context.current_price}")
+
+    # Fix #1: Refresh current_price on any open DB position for this ticker
+    # so portfolio PnL is live, not frozen at entry price
+    _price_db = SessionLocal()
+    try:
+        _open = (_price_db.query(StoredPosition)
+                 .filter(StoredPosition.ticker == ticker, StoredPosition.is_open == True)
+                 .all())
+        for _pos in _open:
+            _pos.current_price = live_context.current_price
+        if _open:
+            _price_db.commit()
+            logger.debug(f"Updated current_price for {len(_open)} open {ticker} position(s)")
+    except Exception as _e:
+        logger.warning(f"Price refresh failed for {ticker}: {_e}")
+        _price_db.rollback()
+    finally:
+        _price_db.close()
 
     # 2. Strategy agent
     technicals  = await MARKET_AGENT.generate_technical_summary_string(ticker, live_context)
@@ -262,10 +364,10 @@ async def run_agent_loop(ticker: str):
     finally:
         db.close()
 
-    # 3. Risk evaluation against REAL portfolio state
+    # 3. Risk evaluation — uses the module-level RISK_MANAGER singleton
+    # (already configured with day trading params via apply_day_trading_config at startup)
     portfolio     = await _build_portfolio_state()
-    risk          = DeterministicRiskManager()
-    risk_result   = risk.evaluate_signal(signal, portfolio, live_context)
+    risk_result   = RISK_MANAGER.evaluate_signal(signal, portfolio, live_context)
 
     if isinstance(risk_result, RiskRejected):
         log_audit("REJECTED", "RiskManager", ticker,

@@ -5,7 +5,7 @@ from typing import Dict, Any
 
 from pydantic import ValidationError
 from trading_interface.events.schemas import SignalCreated
-from agents.prompts import SWING_TRADING_SYSTEM_PROMPT, USER_CONTEXT_PROMPT_TEMPLATE
+from agents.prompts import DAY_TRADING_SYSTEM_PROMPT, USER_CONTEXT_PROMPT_TEMPLATE
 
 logger = logging.getLogger("StrategyAgent")
 
@@ -26,16 +26,16 @@ class MockSwingLLMClient(AbstractLLMClient):
         if "MISSING" in user_prompt or "Insufficient" in user_prompt:
             return json.dumps({
                 "suggested_action": "HOLD",
-                "suggested_horizon": "swing",
-                "strategy_alias": "swing_momentum",
+                "suggested_horizon": "intraday",
+                "strategy_alias": "day_momentum",
                 "confidence": 0.1,
                 "rationale": "Critical fundamental or sentiment parameters missing. Opting for strict safety default."
             })
         elif "bullish cross" in user_prompt.lower() and "positive narrative" in user_prompt.lower():
             return json.dumps({
                 "suggested_action": "BUY",
-                "suggested_horizon": "swing",
-                "strategy_alias": "swing_momentum",
+                "suggested_horizon": "intraday",
+                "strategy_alias": "day_momentum",
                 "confidence": 0.82,
                 "rationale": "Strong 20SMA support confirmed alongside robust news-driven positive momentum. Fundamental PE ratios indicate fair market valuation over 5-20 day window."
             })
@@ -43,8 +43,8 @@ class MockSwingLLMClient(AbstractLLMClient):
         # The default fallback logic
         return json.dumps({
             "suggested_action": "HOLD",
-            "suggested_horizon": "swing",
-            "strategy_alias": "swing_momentum",
+            "suggested_horizon": "intraday",
+            "strategy_alias": "day_momentum",
             "confidence": 0.50,
             "rationale": "Mixed technical structures with volatile baseline fundamentals. Reward to risk parameters insufficiently robust for capital commitment."
         })
@@ -95,7 +95,7 @@ class StrategyAgent:
         try:
             # Native JSON enforcement at the API level
             raw_response = await self.llm.generate_json(
-                system_prompt=SWING_TRADING_SYSTEM_PROMPT,
+                system_prompt=DAY_TRADING_SYSTEM_PROMPT,
                 user_prompt=user_prompt
             )
             
@@ -132,7 +132,7 @@ class StrategyAgent:
             event_id=uuid.uuid4(),
             ticker=ticker,
             suggested_action="HOLD",
-            suggested_horizon="swing",
+            suggested_horizon="intraday",
             strategy_alias="emergency_safety",
             confidence=0.0,
             rationale=reason
