@@ -48,3 +48,32 @@ npm run dev
 ```
 
 Navigate to `http://localhost:5173`.
+
+## Deployment (AWS EKS)
+
+This project includes Dockerfiles for containerizing both the frontend and backend, as well as a Kubernetes manifest (`k8s-deploy.yaml`) to deploy the microservices to an AWS Elastic Kubernetes Service (EKS) cluster using an Application Load Balancer (ALB).
+
+### Containerization
+
+- **Backend**: Built using a `python:3.11-slim` base image, which installs `requirements.txt` and runs `uvicorn` on port `8000`.
+- **Frontend**: A multi-stage build using `node:20-alpine` to compile the React SPA and `nginx:alpine` to serve the static assets on port `80`, dynamically resolving the backend API using `VITE_API_URL` during runtime.
+
+### Deploying to EKS
+
+Ensure your local `kubectl` is authenticated with your EKS cluster and `aws-cli` is authenticated with AWS ECR.
+
+Run the provided deployment script to completely build, push, and deploy all services:
+
+```bash
+chmod +x deploy.sh
+./deploy.sh
+```
+
+This script will:
+
+1. Create necessary AWS ECR repositories if they do not exist.
+2. Build Linux/amd64 compatible Docker images.
+3. Push the images to your AWS ECR registry.
+4. Apply `k8s-deploy.yaml` to deploy Deployments, Services, and an AWS ALB Ingress.
+
+Once deployed, the AWS Application Load Balancer will automatically provision a public DNS endpoint linking `/api` routes to your Python backend, and `/` routes to the React frontend.
