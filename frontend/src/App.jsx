@@ -19,7 +19,7 @@ const api = axios.create({
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [isLiveMode, setIsLiveMode] = useState(false);
+  const [isLiveMode, _setIsLiveMode] = useState(false);
 
   // State driven by SSE stream
   const [accountValue, setAccountValue] = useState(0);
@@ -60,9 +60,10 @@ export default function App() {
         try {
           const data = JSON.parse(event.data);
           if (data.error) { console.error('SSE error payload:', data.error); return; }
-          if (data.logs)     setAuditLogs(data.logs);
-          if (data.insights) setAgentInsights(data.insights);
-          if (data.positions) setPositions(data.positions);
+          if (data.logs)      setAuditLogs(data.logs);
+          if (data.insights)  setAgentInsights(data.insights);
+          if (data.positions)  setPositions(data.positions);
+          if (data.account_value) setAccountValue(data.account_value);
         } catch (e) {
           console.error('Failed to parse SSE payload', e);
         }
@@ -140,7 +141,7 @@ export default function App() {
   };
 
   // PnL computed client-side from SSE positions
-  const totalPnlDollars = positions.reduce((sum, p) => {
+  const _totalPnlDollars = positions.reduce((sum, p) => {
     if (!p.entry || !p.current) return sum;
     const raw = (p.current - p.entry) * p.shares;
     return sum + (p.side === 'SHORT' ? -raw : raw);

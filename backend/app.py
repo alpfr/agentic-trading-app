@@ -567,6 +567,10 @@ async def event_stream():
                          "rationale": i.rationale}
                         for i in insights
                     ],
+                    "account_value": sum(
+                        ((p.current_price - p.entry_price) * p.shares)
+                        for p in positions if p.entry_price
+                    ),
                     "positions": [
                         {"id": p.id, "ticker": p.ticker, "side": p.side,
                          "shares": p.shares, "entry": p.entry_price,
