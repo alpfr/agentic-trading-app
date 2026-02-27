@@ -91,7 +91,7 @@ export default function App() {
 
     // Movers — low frequency
     fetchMovers();
-    const moversInterval = setInterval(fetchMovers, 30000);
+    const moversInterval = setInterval(fetchMovers, 60000);
 
     return () => {
       sseRef.current?.close();
@@ -399,10 +399,13 @@ export default function App() {
                     {(movers[key] || []).slice(0, 10).map(m => (
                       <div key={m.ticker} onClick={() => { setQuoteTicker(m.ticker); setActiveTab('quote'); }}
                         style={{ background: `${color}11`, border: `1px solid ${color}33`, padding: '12px 16px', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', cursor: 'pointer' }}>
-                        <div><span style={{ fontWeight: 700, marginRight: '8px' }}>{m.ticker}</span><span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{m.name?.substring(0, 20)}</span></div>
+                        <div>
+                          <div><span style={{ fontWeight: 700, marginRight: '8px' }}>{m.ticker}</span><span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{m.name?.substring(0, 20)}</span></div>
+                          {m.volume > 0 && <div style={{ fontSize: '11px', color: 'var(--text-dark)', marginTop: '2px' }}>Vol: {m.volume >= 1e6 ? (m.volume/1e6).toFixed(1)+'M' : m.volume >= 1e3 ? (m.volume/1e3).toFixed(0)+'K' : m.volume}</div>}
+                        </div>
                         <div style={{ textAlign: 'right' }}>
                           <div style={{ fontFamily: 'monospace', fontWeight: 600 }}>${m.price?.toFixed(2)}</div>
-                          <div style={{ color, fontSize: '12px', fontFamily: 'monospace' }}>{m.change_pct >= 0 ? '+' : ''}{m.change_pct?.toFixed(2)}%</div>
+                          <div style={{ color, fontSize: '12px', fontFamily: 'monospace', fontWeight: 600 }}>{m.change_pct >= 0 ? '+' : ''}{m.change_pct?.toFixed(2)}%</div>
                         </div>
                       </div>
                     ))}

@@ -34,6 +34,7 @@ import yfinance as yf
 
 # Local imports
 from agents.market_data import MarketDataAgent
+from agents.movers import get_movers
 from agents.strategy import StrategyAgent, MockSwingLLMClient, OpenAILLMClient
 from core.database import (
     SessionLocal,
@@ -400,41 +401,15 @@ def get_quote(ticker: str):
 
 
 @app.get("/api/movers", dependencies=[Depends(require_api_key)])
-async def get_movers():
+async def fetch_movers():
     """
-    Fetches top gainers, losers, and actives from Yahoo Finance.
-    FIX: Uses httpx.AsyncClient (non-blocking) instead of requests.get (blocking).
+    Returns top gainers, losers, and most active tickers.
+    PRIMARY  — yf.screen() Yahoo Finance predefined screeners (handles cookie/crumb auth)
+    FALLBACK — 40-ticker watchlist with 2-day OHLCV computation if screener fails.
+    Cached 2 minutes to avoid hammering Yahoo Finance.
     """
-    headers = {"User-Agent": "Mozilla/5.0"}
-    urls = {
-        "gainers": "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?formatted=false&lang=en-US&region=US&scrIds=day_gainers&count=10",
-        "losers":  "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?formatted=false&lang=en-US&region=US&scrIds=day_losers&count=10",
-        "actives": "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?formatted=false&lang=en-US&region=US&scrIds=most_actives&count=10",
-    }
-
-    def fmt(q):
-        return {
-            "ticker":     q.get("symbol"),
-            "name":       q.get("shortName", q.get("symbol")),
-            "change_pct": q.get("regularMarketChangePercent", 0.0),
-            "price":      q.get("regularMarketPrice", 0.0),
-        }
-
     try:
-        async with httpx.AsyncClient(headers=headers, timeout=10.0) as client:
-            responses = await asyncio.gather(
-                *[client.get(u) for u in urls.values()],
-                return_exceptions=True,
-            )
-
-        result = {}
-        for key, resp in zip(urls.keys(), responses):
-            if isinstance(resp, Exception):
-                result[key] = []
-            else:
-                quotes = resp.json().get("finance", {}).get("result", [{}])[0].get("quotes", [])
-                result[key] = [fmt(q) for q in quotes]
-
+        result = await get_movers()
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch movers: {e}")
