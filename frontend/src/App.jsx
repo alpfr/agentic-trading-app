@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Shield, ShieldAlert, Activity, PieChart, Info, Database, BarChart3, TrendingUp, Settings2, Play, Search } from 'lucide-react';
+import { Shield, ShieldAlert, Activity, PieChart, Info, Database, BarChart3, TrendingUp, Settings2, Play, Search, Lightbulb } from 'lucide-react';
+import { AdvancedRealTimeChart } from "react-ts-tradingview-widgets";
 import './index.css';
 
 export default function App() {
@@ -11,6 +12,7 @@ export default function App() {
   const [accountValue, setAccountValue] = useState(105240.50);
   const [positions, setPositions] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
+  const [agentInsights, setAgentInsights] = useState([]);
   const [marketDataHistory, setMarketDataHistory] = useState([]);
   const [targetTicker, setTargetTicker] = useState('AAPL');
   const [isSimulating, setIsSimulating] = useState(false);
@@ -27,7 +29,7 @@ export default function App() {
   const lookupQuote = async () => {
     setQuoteLoading(true);
     try {
-      const res = await axios.get(`http://localhost:8002/api/quote/${quoteTicker}`);
+      const res = await axios.get(`http://127.0.0.1:8002/api/quote/${quoteTicker}`);
       setQuoteData(res.data);
     } catch (err) {
       alert("Failed to fetch quote.");
@@ -38,7 +40,7 @@ export default function App() {
   const fetchMovers = async () => {
     setMoversLoading(true);
     try {
-      const res = await axios.get('http://localhost:8002/api/movers');
+      const res = await axios.get('http://127.0.0.1:8002/api/movers');
       setMovers(res.data);
     } catch (err) {
       console.error("Failed to fetch movers.");
@@ -50,17 +52,20 @@ export default function App() {
   useEffect(() => {
     const fetchStates = async () => {
       try {
-        const portRes = await axios.get('http://localhost:8002/api/portfolio');
+        const portRes = await axios.get('http://127.0.0.1:8002/api/portfolio');
         setPositions(portRes.data.positions);
         if (portRes.data.account_value) {
           setAccountValue(portRes.data.account_value);
         }
 
-        const logRes = await axios.get('http://localhost:8002/api/logs');
+        const logRes = await axios.get('http://127.0.0.1:8002/api/logs');
         setAuditLogs(logRes.data.logs);
 
+        const insightRes = await axios.get('http://127.0.0.1:8002/api/insights');
+        setAgentInsights(insightRes.data.insights || []);
+
         // Fetch market data history from our DB
-        const marketRes = await axios.get('http://localhost:8002/api/market-data');
+        const marketRes = await axios.get('http://127.0.0.1:8002/api/market-data');
         setMarketDataHistory(marketRes.data.saved_data || []);
       } catch (err) {
         console.error("Backend Disconnected:", err);
@@ -84,7 +89,7 @@ export default function App() {
   const triggerAgent = async () => {
     setIsSimulating(true);
     try {
-      await axios.post('http://localhost:8002/api/trigger', { ticker: targetTicker });
+      await axios.post('http://127.0.0.1:8002/api/trigger', { ticker: targetTicker });
     } catch (err) {
       alert("FastAPI backend is not running. Start with 'uvicorn app:app --reload' in the backend directory.");
     }
@@ -94,7 +99,7 @@ export default function App() {
   const clearMarketDatabase = async () => {
     if (!window.confirm("Are you sure you want to delete all saved market data records?")) return;
     try {
-      await axios.delete('http://localhost:8002/api/market-data');
+      await axios.delete('http://127.0.0.1:8002/api/market-data');
     } catch (err) {
       alert("Failed to clear database.");
     }
@@ -114,6 +119,7 @@ export default function App() {
 
         <div style={{ flex: 1, padding: '16px 12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <SidebarButton active={activeTab === 'dashboard'} icon={<PieChart />} label="Portfolio & Risk" onClick={() => setActiveTab('dashboard')} />
+          <SidebarButton active={activeTab === 'insights'} icon={<Lightbulb />} label="AI Insights" onClick={() => setActiveTab('insights')} />
           <SidebarButton active={activeTab === 'movers'} icon={<TrendingUp />} label="Market Movers" onClick={() => setActiveTab('movers')} />
           <SidebarButton active={activeTab === 'quote'} icon={<Search />} label="Quote Lookup" onClick={() => setActiveTab('quote')} />
           <SidebarButton active={activeTab === 'audit'} icon={<Database />} label="Audit Journal" onClick={() => setActiveTab('audit')} />
@@ -238,6 +244,77 @@ export default function App() {
           </div>
         )}
 
+        {/* AI INSIGHTS TAB */}
+        {activeTab === 'insights' && (
+          <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            <h3 style={{ fontSize: '18px', fontWeight: 500, borderBottom: '1px solid var(--border)', paddingBottom: '16px', marginBottom: '8px' }}>Agent Execution Insights</h3>
+            {agentInsights.length === 0 && <p style={{ color: 'var(--text-muted)' }}>No AI insights generated yet. Run an agent cycle to analyze a ticker.</p>}
+
+            {agentInsights.map(insight => (
+              <div key={insight.id} className="glass-panel" style={{ padding: '24px', position: 'relative', overflow: 'hidden' }}>
+                {/* Status Indicator Bar */}
+                <div style={{
+                  position: 'absolute', left: 0, top: 0, bottom: 0, width: '4px',
+                  background: insight.action === 'BUY' ? 'var(--success)' : insight.action === 'SELL' ? 'var(--danger)' : 'var(--warning)'
+                }} />
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                      <h4 style={{ fontSize: '24px', fontWeight: 700, margin: 0 }}>{insight.ticker}</h4>
+                      <span style={{
+                        padding: '4px 10px', borderRadius: '4px', fontSize: '12px', fontWeight: 700,
+                        background: insight.action === 'BUY' ? 'rgba(52, 211, 153, 0.1)' : insight.action === 'SELL' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(245, 158, 11, 0.1)',
+                        color: insight.action === 'BUY' ? 'var(--success)' : insight.action === 'SELL' ? 'var(--danger)' : 'var(--warning)'
+                      }}>
+                        {insight.action}
+                      </span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{insight.time}</span>
+                    </div>
+                    <p style={{ margin: 0, fontSize: '15px', lineHeight: 1.6, color: 'var(--text-dark)', maxWidth: '90%' }}>
+                      <strong>AI Rationale:</strong> {insight.rationale}
+                    </p>
+                  </div>
+
+                  <div style={{ textAlign: 'right', background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                    <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Confidence</p>
+                    <p style={{ margin: 0, fontSize: '20px', fontWeight: 600, fontFamily: 'monospace', color: insight.confidence >= 0.7 ? 'var(--success)' : insight.confidence <= 0.3 ? 'var(--danger)' : 'var(--warning)' }}>
+                      {(insight.confidence * 100).toFixed(0)}%
+                    </p>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)', gap: '16px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '20px' }}>
+                  {/* Fundamentals */}
+                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                    <h5 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--text-muted)', margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '6px' }}><PieChart size={14} /> Fundamentals</h5>
+                    <p style={{ fontSize: '13px', lineHeight: 1.6, color: 'var(--text-dark)', margin: 0, fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+                      {insight.fundamentals}
+                    </p>
+                  </div>
+
+                  {/* Technicals */}
+                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                    <h5 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--text-muted)', margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '6px' }}><Activity size={14} /> Technicals</h5>
+                    <p style={{ fontSize: '13px', lineHeight: 1.6, color: 'var(--text-dark)', margin: 0, fontFamily: 'monospace' }}>
+                      {insight.technicals}
+                    </p>
+                  </div>
+
+                  {/* News & Sentiment */}
+                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                    <h5 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--text-muted)', margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '6px' }}><Info size={14} /> News & Sentiment</h5>
+                    <p style={{ fontSize: '13px', lineHeight: 1.5, color: 'var(--text-dark)', margin: 0, overflowY: 'auto', maxHeight: '100px', whiteSpace: 'pre-wrap' }} className="custom-scrollbar">
+                      {insight.sentiment}
+                    </p>
+                  </div>
+                </div>
+
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* MOCK AUDIT TAB */}
         {activeTab === 'audit' && (
           <div className="animate-fade-in glass-panel" style={{ padding: '24px' }}>
@@ -354,6 +431,17 @@ export default function App() {
                   <StatCard label="Market Cap" value={quoteData.market_cap ? `$${(quoteData.market_cap / 1e9).toFixed(2)}B` : 'N/A'} />
                   <StatCard label="52-Week High" value={quoteData.fiftyTwoWeekHigh ? `$${quoteData.fiftyTwoWeekHigh.toFixed(2)}` : 'N/A'} />
                   <StatCard label="52-Week Low" value={quoteData.fiftyTwoWeekLow ? `$${quoteData.fiftyTwoWeekLow.toFixed(2)}` : 'N/A'} />
+                </div>
+
+                <div style={{ height: '400px', marginBottom: '24px', borderRadius: '12px', overflow: 'hidden' }}>
+                  <AdvancedRealTimeChart
+                    theme="dark"
+                    symbol={quoteData.ticker}
+                    width="100%"
+                    height="100%"
+                    allow_symbol_change={false}
+                    hide_side_toolbar={false}
+                  />
                 </div>
 
                 <div>

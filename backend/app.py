@@ -30,7 +30,7 @@ app = FastAPI(title="Agentic Trading App API")
 # Allow React Frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,6 +39,7 @@ app.add_middleware(
 # --- GLOBAL IN-MEMORY STATE FOR DEMO ---
 # Replaces Postgres / Redis for rapid local demonstration
 GLOBAL_AUDIT_LOGS = []
+GLOBAL_AGENT_INSIGHTS = []
 GLOBAL_POSITIONS = []
 BROKER_CLIENT = AlpacaPaperBroker()
 
@@ -122,6 +123,18 @@ async def run_agent_loop(ticker: str):
     
     signal = await strategy.evaluate_context(ticker, technicals_str, sentiment, fundamentals)
     log_audit("PROPOSED", "StrategyAgent", ticker, f"Proposed {signal.suggested_action}. Rationale: {signal.rationale}")
+
+    GLOBAL_AGENT_INSIGHTS.insert(0, {
+        "id": str(uuid.uuid4())[:8],
+        "time": time.strftime("%H:%M:%S"),
+        "ticker": ticker,
+        "action": signal.suggested_action,
+        "confidence": signal.confidence,
+        "rationale": signal.rationale,
+        "technicals": technicals_str,
+        "sentiment": sentiment,
+        "fundamentals": fundamentals
+    })
     
     # 2. Risk Manager validates math
     risk = get_risk_manager()
@@ -279,6 +292,10 @@ def get_movers():
 @app.get("/api/logs")
 async def get_logs():
     return {"logs": GLOBAL_AUDIT_LOGS[:20]} # Return last 20
+
+@app.get("/api/insights")
+async def get_insights():
+    return {"insights": GLOBAL_AGENT_INSIGHTS[:20]}
 
 @app.post("/api/trigger")
 async def trigger_agent(background_tasks: BackgroundTasks, payload: dict):

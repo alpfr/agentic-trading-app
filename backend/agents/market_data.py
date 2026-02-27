@@ -149,10 +149,16 @@ class MarketDataAgent:
              stock = yf.Ticker(ticker)
              info = stock.info
              
+             # Attempt to fetch with rigorous fallbacks
              pe = info.get("trailingPE", "N/A")
              f_pe = info.get("forwardPE", "N/A")
              pb = info.get("priceToBook", "N/A")
              
+             # Fallback logic for completely missing valuation
+             # Usually happens with new IPOs, SPACs, or broken yahoo finance endpoints
+             if pe == "N/A" and f_pe == "N/A" and pb == "N/A":
+                 return "MISSING: Critical fundamental valuation data could not be retrieved. Asset may be a SPAC, recent IPO, or highly illiquid."
+                 
              dy = info.get("dividendYield", "N/A")
              if dy != "N/A" and dy is not None:
                  # Yahoo Finance dividendYield is usually out of 1.0 (e.g. 0.0038 for 0.38%)
@@ -169,4 +175,4 @@ class MarketDataAgent:
              return f"Trailing P/E: {pe} | Forward P/E: {f_pe} | P/B: {pb} | Div Yield: {dy} | Profit Margins: {pm}"
          except Exception as e:
              logger.error(f"Failed to fetch fundamentals for {ticker}: {e}")
-             return "Fundamentals data temporarily unavailable."
+             return "MISSING: Fundamentals data temporarily unavailable due to upstream API error."
