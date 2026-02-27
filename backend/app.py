@@ -59,6 +59,11 @@ from trading_interface.broker.base import AccountSchema
 from trading_interface.events.schemas import RiskRejected, RiskApproved
 from trading_interface.execution.agent import ExecutionAgent
 from trading_interface.security import require_api_key, sanitize_ticker
+from trading_interface.security.rate_limit import limiter, rate_limit_exceeded_handler
+from trading_interface.security.audit_log import audit_from_request
+from trading_interface.security.auth_router import router as auth_router
+from slowapi.errors import RateLimitExceeded
+from trading_interface.security import SecurityHeadersMiddleware
 
 load_dotenv()
 
@@ -75,8 +80,18 @@ logger = logging.getLogger("app")
 app = FastAPI(title="Agentic Trading App API", version="1.1.0")
 
 _cors_origins = os.getenv(
-    "CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+    "CORS_ALLOWED_ORIGINS", ""  # Must be explicitly set — no default in prod
 ).split(",")
+
+# Rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+# Security response headers
+app.middleware('http')(SecurityHeadersMiddleware(app))
+
+# Auth router
+app.include_router(auth_router)
 
 app.add_middleware(
     CORSMiddleware,

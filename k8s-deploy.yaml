@@ -86,6 +86,47 @@ spec:
               name: trading-app-secrets
               key: database-url
 
+        # --- SOC 2: JWT + MFA secrets ---
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: trading-app-secrets
+              key: jwt-secret
+
+        - name: ADMIN_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: trading-app-secrets
+              key: admin-username
+              optional: true
+
+        - name: ADMIN_PASSWORD_HASH
+          valueFrom:
+            secretKeyRef:
+              name: trading-app-secrets
+              key: admin-password-hash
+              optional: true
+
+        - name: ADMIN_TOTP_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: trading-app-secrets
+              key: admin-totp-secret
+              optional: true
+
+        - name: CORS_ALLOWED_ORIGINS
+          valueFrom:
+            secretKeyRef:
+              name: trading-app-secrets
+              key: cors-allowed-origins
+              optional: true
+
+        - name: JWT_ACCESS_TTL_MINUTES
+          value: "15"
+
+        - name: JWT_REFRESH_TTL_DAYS
+          value: "7"
+
         # --- K8s Health Probes ---
         livenessProbe:
           httpGet:
@@ -186,8 +227,21 @@ metadata:
     kubernetes.io/ingress.class: alb
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    # WAF rate limiting — attach your WAF ACL ARN here
-    # alb.ingress.kubernetes.io/wafv2-acl-arn: arn:aws:wafv2:...
+    # ── TLS / HTTPS ────────────────────────────────────────────────────────
+    # Uncomment and set ACM_CERT_ARN after requesting your certificate.
+    # alb.ingress.kubernetes.io/certificate-arn: "${ACM_CERT_ARN}"
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    # HTTP → HTTPS redirect
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    # TLS 1.2 minimum — rejects TLS 1.0 and 1.1
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    # ── WAF ────────────────────────────────────────────────────────────────
+    # alb.ingress.kubernetes.io/wafv2-acl-arn: "${WAF_ACL_ARN}"
+    # ── Access logging ─────────────────────────────────────────────────────
+    alb.ingress.kubernetes.io/load-balancer-attributes: >-
+      access_logs.s3.enabled=false,
+      idle_timeout.timeout_seconds=60,
+      routing.http.drop_invalid_header_fields.enabled=true
 spec:
   rules:
   - http:

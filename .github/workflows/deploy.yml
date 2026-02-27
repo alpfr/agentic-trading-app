@@ -301,6 +301,11 @@ jobs:
             --from-literal=alpaca-api-key="${{ secrets.ALPACA_API_KEY }}" \
             --from-literal=alpaca-secret-key="${{ secrets.ALPACA_SECRET_KEY }}" \
             --from-literal=app-api-key="${{ secrets.APP_API_KEY }}" \
+            --from-literal=jwt-secret="${{ secrets.JWT_SECRET }}" \
+            --from-literal=admin-username="${{ secrets.ADMIN_USERNAME }}" \
+            --from-literal=admin-password-hash="${{ secrets.ADMIN_PASSWORD_HASH }}" \
+            --from-literal=admin-totp-secret="${{ secrets.ADMIN_TOTP_SECRET }}" \
+            --from-literal=cors-allowed-origins="${{ secrets.CORS_ALLOWED_ORIGINS }}" \
             --from-literal=database-url="${{ secrets.DATABASE_URL }}" \
             --dry-run=client -o yaml | kubectl apply -f -
           echo "K8s secrets applied"
