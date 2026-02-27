@@ -51,7 +51,7 @@ from core.rebalance import compute_rebalance_report
 from core.alerts import check_and_generate_alerts, get_all_alerts, mark_read, get_unread_count
 from core.rebalancer import compute_rebalance, rebalance_report_to_dict
 from core.alerts import generate_portfolio_alerts
-from core.day_trading import apply_day_trading_config
+from core.retirement_config import apply_retirement_config
 from agents.fundamental import fetch_fundamentals
 from trading_interface.reconciliation.job import SyncWorker
 from trading_interface.broker.alpaca_paper import AlpacaPaperBroker
@@ -107,7 +107,7 @@ app.add_middleware(
 BROKER_CLIENT   = AlpacaPaperBroker()
 MARKET_AGENT    = MarketDataAgent()   # Module-level: cache survives across requests
 
-# Fix #5: RISK_MANAGER is a module-level singleton so apply_day_trading_config()
+# RISK_MANAGER is a module-level singleton so apply_retirement_config()
 # patches the SAME instance that run_agent_loop() uses on every call.
 # Previously a fresh DeterministicRiskManager() was created inside run_agent_loop(),
 # discarding all config overrides (ATR multiplier, position cap, etc.)
@@ -428,7 +428,7 @@ async def run_agent_loop(ticker: str):
         db.close()
 
     # 3. Risk evaluation — uses the module-level RISK_MANAGER singleton
-    # (already configured with day trading params via apply_day_trading_config at startup)
+    # (already configured with retirement params via apply_retirement_config at startup)
     portfolio     = await _build_portfolio_state()
     # Pass raw fundamentals for retirement risk gates (P/E, payout ratio)
     risk_result   = RISK_MANAGER.evaluate_signal(signal, portfolio, live_context, fund_data)
