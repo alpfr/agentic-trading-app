@@ -1,238 +1,137 @@
-# 🤖 Agentic Trading App
+# 🏦 Retirement Portfolio Advisor
 
-A full-stack, cloud-native agentic trading platform built on **FastAPI**, **React**, and **AWS EKS**. An LLM-powered Strategy Agent proposes trades, a deterministic Risk Gatekeeper enforces hard mathematical constraints, and an Execution Agent routes approved orders to Alpaca's paper trading API.
+An AI-powered retirement investment research tool — analyzes stocks and ETFs, monitors your paper portfolio, recommends rebalancing, and generates alerts, all with deterministic risk guardrails the AI cannot bypass.
 
-> ⚠️ **NOT FINANCIAL ADVICE.** Paper trading only. For educational and research purposes.
+> **Paper trading only.** This tool is a research and learning aid. Keep your actual retirement savings in a tax-advantaged account (401k, IRA, Roth IRA).
 
 ---
 
 ## Live Deployment
 
-| | |
-|---|---|
-| **Cluster** | `agentic-trading-cluster` (AWS EKS, us-east-1) |
-| **Namespace** | `agentic-trading-platform` |
-| **Get URL** | Run the **Get App URL** GitHub Actions workflow |
-
-To get your live app URL at any time:
-1. Go to `Actions → Get App URL → Run workflow`
-2. Open the run summary — URL is printed there
+| Item | Value |
+|------|-------|
+| Platform | AWS EKS (us-east-1) |
+| Cluster | `agentic-trading-cluster` |
+| Namespace | `agentic-trading-platform` |
+| Broker | Alpaca Paper Trading |
+| Deploy | GitHub Actions (auto on push to `master`) |
 
 ---
 
-## Architecture
+## What It Does
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                  React Frontend (Vite)                      │
-│   ⭐ Watchlist · Dashboard · Market Movers · Quote · Audit  │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ HTTP + SSE  (X-API-Key)
-┌──────────────────────────▼──────────────────────────────────┐
-│                  FastAPI Backend (Python)                    │
-│                                                             │
-│  MarketScheduler ──► MarketDataAgent ──► StrategyAgent      │
-│  (20min / ticker)              (LLM signal)                 │
-│                                        │                    │
-│                           DeterministicRiskManager          │
-│                           (hard math gates — no LLM bypass) │
-│                                        │                    │
-│                              ExecutionAgent                 │
-│                              AlpacaPaperBroker              │
-└──────────────┬──────────────────────────────────────────────┘
-               │
-     ┌─────────▼──────────┐
-     │  SQLite (dev)       │
-     │  PostgreSQL (prod)  │
-     └────────────────────┘
-```
-
-### Agent Pipeline
-
-| Stage | Agent | Description |
-|---|---|---|
-| 1 | **MarketScheduler** | Triggers agent loops every 20 min per ticker, Mon–Fri 09:35–15:40 ET |
-| 2 | **MarketDataAgent** | Fetches price, ATR-14, SMA-20/50, VIX, real earnings dates (yfinance) |
-| 3 | **StrategyAgent** | GPT-4o-mini signal: BUY / SELL / HOLD with rationale |
-| 4 | **DeterministicRiskManager** | 8 hard gates — LLM cannot bypass |
-| 5 | **ExecutionAgent** | Routes `RiskApproved` → broker with exponential backoff |
-| 6 | **SyncWorker** | Periodic reconciliation — broker is always source of truth |
-| 7 | **EOD Sweep** | Auto-closes all positions at 15:45 ET (day trading mode) |
+| Feature | Description |
+|---------|-------------|
+| **AI Advisor** | GPT-4o-mini evaluates each holding as a long-term business — fundamentals, dividend sustainability, moat, 5-year thesis |
+| **Daily Scan** | Runs every trading day at 10:00 ET across your full watchlist |
+| **Rebalance Engine** | Compares current allocation vs targets weekly; flags drift >5% |
+| **Alert System** | Price drops >5%, trailing stop breaches, dividend payout risk |
+| **Risk Guardrails** | Hard mathematical limits the AI cannot override |
+| **Paper Trading** | Executes paper orders via Alpaca; tracks PnL on simulated positions |
 
 ---
 
-## Watchlist & Day Trading Config
+## Default Portfolio
 
-Default watchlist: **AAOI, BWIN, DELL, FIGS, SSL**
-
-| Config | Value | Description |
-|---|---|---|
-| Style | `day_trading` | In/out same session |
-| Risk profile | `conservative` | Tight stops, small size |
-| Risk per trade | **1%** of equity | Max $ at risk per entry |
-| ATR stop | **1×** ATR-14 | Tighter than swing (2×) |
-| Max position | **3%** of equity | Per-ticker cap |
-| Max open | **3** positions | Concurrent limit |
-| Scan interval | **20 min** | Per-ticker during market hours |
-| EOD close | **15:45 ET** | All positions auto-closed daily |
+| Ticker | Name | Category | Target |
+|--------|------|----------|--------|
+| VTI | Vanguard Total Market ETF | ETF | 40% combined |
+| SCHD | Schwab Dividend ETF | ETF | |
+| QQQ | Invesco Nasdaq-100 ETF | ETF | |
+| JNJ | Johnson & Johnson | Dividend | 25% combined |
+| PG | Procter & Gamble | Dividend | |
+| MSFT | Microsoft | Growth | 35% combined |
+| NVDA | Nvidia | Growth | |
+| AAPL | Apple | Growth | |
 
 ---
 
-## Risk Constraints (Hardcoded — LLM Cannot Override)
+## Risk Guardrails
 
-| Constraint | Value |
-|---|---|
-| Max account drawdown (HWM) | 10% |
-| Daily loss circuit breaker | 3% |
-| Max single position size | 3% equity (day trading) / 5% default |
-| Max sector exposure | 20% equity |
-| Min average daily volume | 5,000,000 shares |
-| Max VIX for new longs | 35.0 (defaults to 99.0 on fetch failure) |
-| Earnings blackout window | 3 days |
-| ATR stop multiplier | 1× (day trading) / 2× (swing) |
+Enforced in Python — AI recommendation is rejected if any gate fails.
 
----
-
-## Quick Start (Local Development)
-
-### Backend
-```bash
-cd backend
-cp .env.example .env        # Fill in your keys
-pip install -r requirements.txt
-uvicorn app:app --reload --port 8000
-```
-
-### Frontend
-```bash
-cd frontend
-cp .env.example .env        # Set VITE_API_BASE_URL + VITE_API_KEY
-npm install
-npm run dev                 # http://localhost:5173
-```
+| Gate | Limit | Purpose |
+|------|-------|---------|
+| Min signal confidence | 60% | Only act on high-conviction signals |
+| Max single position | 10% | Prevent over-concentration |
+| Portfolio drawdown pause | 20% from peak | Stop buying during major corrections |
+| Min hold period | 30 days | Avoid churn + short-term capital gains tax |
+| Trailing stop alert | 15% from entry | Soft alert only — review thesis, not auto-sell |
+| Rebalance drift trigger | 5% from target | Weekly category rebalance check |
 
 ---
 
 ## API Reference
 
-All endpoints require `X-API-Key` header (or `?api_key=` for SSE).
+All endpoints require `X-API-Key` header.
 
 | Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/health` | Liveness/readiness probe |
-| `GET` | `/api/watchlist` | Current watchlist + trading config |
-| `PUT` | `/api/watchlist` | Update watchlist tickers |
-| `POST` | `/api/watchlist/scan` | Scan all watchlist tickers now |
-| `POST` | `/api/watchlist/close-all` | Close all open positions (manual EOD) |
-| `POST` | `/api/trigger` | Trigger agent loop for one ticker |
-| `GET` | `/api/stream` | SSE — real-time logs, insights, positions |
-| `GET` | `/api/portfolio` | Open positions + account value |
-| `GET` | `/api/quote/{ticker}` | Quote + fundamentals |
-| `GET` | `/api/movers` | Top gainers, losers, most active |
-| `GET` | `/api/logs` | Last 20 audit entries |
-| `GET` | `/api/insights` | Last 20 AI strategy insights |
-| `GET` | `/api/market-data` | Stored market snapshots |
-| `DELETE` | `/api/market-data` | Clear market data records |
+|--------|----------|-------------|
+| GET | `/health` | Health check |
+| GET | `/api/portfolio` | Open positions + account value |
+| GET | `/api/watchlist` | Current watchlist + retirement config |
+| PUT | `/api/watchlist` | Update watchlist tickers |
+| POST | `/api/watchlist/scan` | Trigger immediate full scan |
+| GET | `/api/rebalance` | Category drift report + recommendations |
+| POST | `/api/rebalance/run` | Manual rebalance check |
+| GET | `/api/alerts` | All portfolio alerts |
+| POST | `/api/alerts/{id}/read` | Mark alert as read |
+| GET | `/api/dividends` | Dividend income summary |
+| GET | `/api/fundamentals/{ticker}` | Full fundamentals for a ticker |
+| GET | `/api/quote/{ticker}` | Live quote |
+| GET | `/api/insights` | AI advisor recommendation history |
+| GET | `/api/logs` | Audit trail |
+| POST | `/api/trigger` | Run AI analysis on a ticker |
+| GET | `/api/stream` | SSE live data stream |
 
 ---
 
 ## Project Structure
 
 ```
-agentic-trading-app/
-├── .github/
-│   └── workflows/
-│       ├── deploy.yml          # CI/CD: lint → build → provision EKS → deploy
-│       ├── get-app-url.yml     # Manual: prints live ALB URL
-│       └── destroy.yml         # Manual: tear down all infrastructure
 ├── backend/
+│   ├── app.py                      # FastAPI, all endpoints, startup
 │   ├── agents/
-│   │   ├── market_data.py      # yfinance data + earnings calendar (module-level cache)
-│   │   ├── movers.py           # Gainers/losers: yf.screen() + watchlist fallback
-│   │   ├── strategy.py         # LLM client + StrategyAgent
-│   │   └── prompts.py          # System & user prompt templates
+│   │   ├── market_data.py          # yfinance (thread pool — non-blocking)
+│   │   ├── fundamental.py          # P/E, dividend, revenue data
+│   │   ├── strategy.py             # LLM strategy agent
+│   │   ├── prompts.py              # Retirement advisor system prompt
+│   │   └── movers.py               # Market movers scanner
 │   ├── core/
-│   │   ├── database.py         # SQLAlchemy models
-│   │   ├── day_trading.py      # Day trading risk overrides + EOD close
-│   │   ├── portfolio_state.py  # PortfolioState + MarketContext (Pydantic)
-│   │   ├── risk_gatekeeper.py  # DeterministicRiskManager (configurable ATR/pos)
-│   │   ├── scheduler.py        # MarketScheduler (20min scan, EOD sweep)
-│   │   └── watchlist.py        # TradingConfig + watchlist singleton
-│   ├── trading_interface/
-│   │   ├── broker/             # AbstractBrokerAPI + AlpacaPaperBroker
-│   │   ├── events/schemas.py   # Pydantic event schemas
-│   │   ├── execution/agent.py  # ExecutionAgent + exponential backoff
-│   │   ├── reconciliation/     # SyncWorker (broker = source of truth)
-│   │   └── security/           # API key auth + ticker sanitization
-│   ├── app.py                  # FastAPI app + all endpoints + startup scheduler
-│   ├── main.py                 # Standalone lifecycle demo
-│   ├── .env.example
-│   └── requirements.txt
-├── frontend/
-│   └── src/
-│       └── App.jsx             # React UI (Watchlist, Dashboard, Movers, Quote, Audit)
-├── k8s-deploy.yaml             # EKS manifests (secrets, resource limits, probes)
-├── deploy.sh                   # One-shot local deployment script
-├── README.md
-├── ARCHITECTURE.md
-├── DEPLOYMENT.md
-├── AGENTIC_TRADING_SPEC.md
-├── ALPACA_INTEGRATION.md
-├── SOC2_COMPLIANCE.md
-└── TRADING_INTERFACE_SPEC.md
+│   │   ├── watchlist.py            # RetirementConfig, target allocations
+│   │   ├── risk_gatekeeper.py      # RetirementRiskManager, 7 gates
+│   │   ├── scheduler.py            # Daily scan + weekly rebalance
+│   │   ├── rebalance.py            # Category drift + recommendations
+│   │   ├── alerts.py               # Price/stop/dividend alerts
+│   │   ├── database.py             # SQLAlchemy models
+│   │   └── portfolio_state.py      # Shared schemas
+│   └── trading_interface/
+│       ├── broker/alpaca_paper.py  # Alpaca paper broker
+│       ├── execution/agent.py      # Order execution
+│       └── reconciliation/job.py   # Broker sync (every 5 min)
+├── frontend/src/App.jsx            # React UI (8 tabs)
+├── k8s-deploy.yaml                 # Kubernetes manifests
+└── .github/workflows/
+    ├── deploy.yml                  # CI/CD (lint → build → EKS → deploy)
+    └── get-app-url.yml             # Retrieve live ALB URL
 ```
-
----
-
-## GitHub Actions Workflows
-
-| Workflow | Trigger | What it does |
-|---|---|---|
-| `deploy.yml` | Push to `master` | Lint → ECR build/push → EKS provision → rolling deploy |
-| `get-app-url.yml` | Manual | Prints live ALB URL + pod status |
-| `destroy.yml` | Manual (`DESTROY`) | Tears down cluster + all AWS resources |
 
 ---
 
 ## Environment Variables
 
-### Backend (`backend/.env`)
-
-| Variable | Required | Description |
-|---|---|---|
-| `OPENAI_API_KEY` | No | GPT-4o-mini. Omit for deterministic mock LLM |
-| `ALPACA_API_KEY` | No | Alpaca paper account key |
-| `ALPACA_SECRET_KEY` | No | Alpaca paper account secret |
-| `APP_API_KEY` | **Yes (prod)** | `X-API-Key` header secret. Generate: `openssl rand -hex 32` |
-| `DATABASE_URL` | No | Defaults to SQLite. Set PostgreSQL URL for production |
-| `CORS_ALLOWED_ORIGINS` | No | Comma-separated allowed frontend origins |
-
-### Frontend (`frontend/.env`)
-
 | Variable | Description |
-|---|---|
-| `VITE_API_BASE_URL` | Backend URL (e.g. `http://your-alb.elb.amazonaws.com`) |
-| `VITE_API_KEY` | Must match backend `APP_API_KEY` |
+|----------|-------------|
+| `OPENAI_API_KEY` | GPT-4o-mini for AI advisor |
+| `ALPACA_API_KEY` | Alpaca paper trading |
+| `ALPACA_SECRET_KEY` | Alpaca paper trading |
+| `APP_API_KEY` | Frontend → backend auth |
+| `DATABASE_URL` | SQLite (default) or PostgreSQL |
+| `AWS_ACCESS_KEY_ID` | ECR + EKS access (GitHub secret) |
+| `AWS_SECRET_ACCESS_KEY` | ECR + EKS access (GitHub secret) |
 
 ---
 
-## Security
+## Disclaimer
 
-- All API endpoints protected by `X-API-Key` authentication
-- All credentials stored in Kubernetes Secrets — never in YAML or source control
-- AWS Account ID never committed — injected at deploy time via `envsubst`
-- Ticker inputs validated against `^[A-Z]{1,5}$` regex
-- `/api/trigger` rate-limited (10s cooldown per ticker)
-- Paper broker URL hardcoded — live mode requires explicit code change
-- ECR image scanning enabled on push
-
----
-
-## Docs
-
-- [Architecture Deep Dive](ARCHITECTURE.md)
-- [Deployment Guide](DEPLOYMENT.md)
-- [Agentic Trading Spec](AGENTIC_TRADING_SPEC.md)
-- [Alpaca Integration](ALPACA_INTEGRATION.md)
-- [Trading Interface Spec](TRADING_INTERFACE_SPEC.md)
-- [SOC2 Compliance Notes](SOC2_COMPLIANCE.md)
+This application is a research and learning tool only. It does not provide financial advice. AI recommendations are paper-simulated and should never be the sole basis for real investment decisions. Always consult a qualified financial advisor before making retirement investment decisions.

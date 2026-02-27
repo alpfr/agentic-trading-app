@@ -1,156 +1,133 @@
-# Agentic Trading App — Product Specification
+# Agentic Retirement Advisor — Technical Specification
 
-> **🚨 MANDATORY DISCLAIMER:** Not Financial Advice. This system is for educational, paper-trading, and algorithmic architectural demonstration purposes only. It does not guarantee profits. Market outcomes are strictly unpredictable. The system enforces **PAPER TRADING ONLY** by default.
+## Purpose
 
----
-
-## Overview
-
-The Agentic Trading App is an autonomous multi-agent orchestration platform that ingests US equities market data, generates LLM-powered trade signals, validates them through a deterministic risk engine, and executes approved orders via Alpaca's paper trading API.
+A multi-agent system that acts as a personal retirement investment research assistant. It autonomously scans a portfolio of stocks and ETFs daily, evaluates them through a fundamentals-first AI lens, enforces deterministic risk guardrails, and recommends allocation changes — all on paper before any real capital is committed.
 
 ---
 
-## User Journeys
+## Investment Philosophy
 
-1. **Watchlist Setup** — Configure which tickers to monitor (default: AAOI, BWIN, DELL, FIGS, SSL)
-2. **Automated Scanning** — Agent runs every 20 minutes per ticker during market hours (09:35–15:40 ET)
-3. **Signal Generation** — StrategyAgent proposes BUY/SELL/HOLD with full rationale
-4. **Risk Gatekeeping** — DeterministicRiskManager applies 8 hard mathematical constraints
-5. **Paper Execution** — Approved signals routed to Alpaca paper broker
-6. **EOD Close** — All positions auto-closed at 15:45 ET (day trading mode)
-7. **Monitoring** — Real-time dashboard with SSE stream, audit journal, position tracking
+- **Time horizon**: 5–10 years
+- **Style**: Buy-and-hold; DCA into quality positions
+- **Never**: Trade on price momentum alone
+- **Never**: Auto-sell on short-term volatility
+- **Always**: Evaluate the business, not the chart
 
 ---
 
-## Features
+## Agent Roles
 
-### In Scope
-- Default paper trading execution (Alpaca paper API)
-- Multi-agent context synthesis (market data + LLM strategy)
-- Immutable audit logs (append-only SQLAlchemy model)
-- Deterministic risk gatekeeper (math-only, no LLM bypass)
-- Maximum drawdown circuit breakers (10% HWM, 3% daily)
-- Earnings blackout windows (real dates from yfinance calendar)
-- VIX macro regime gate (blocks new longs above 35)
-- End-of-day auto-close (day trading mode, 15:45 ET)
-- Market-hours scheduler (20-minute scan interval per ticker)
-- Configurable risk profile (conservative / balanced / aggressive)
-- SSE real-time stream (replaces polling)
-- Top gainers/losers/actives (yf.screen() + watchlist fallback)
-- API key authentication on all endpoints
-- EKS deployment with CI/CD via GitHub Actions
-
-### Out of Scope
-- Live trading (requires explicit `LIVE_MODE=true` code change)
-- High-frequency trading / sub-second latency
-- Options, futures, crypto derivatives
-- Black-box neural networks bypassing the risk gatekeeper
-- Multi-user / multi-portfolio support
-- Mobile native app
+| Agent | Responsibility |
+|-------|---------------|
+| `MarketDataAgent` | Price, SMA, ATR, volume (yfinance, thread pool) |
+| `FundamentalAgent` | P/E, dividend yield, payout ratio, revenue growth (yfinance, 6hr cache) |
+| `StrategyAgent` | GPT-4o-mini — synthesizes data into BUY/SELL/HOLD/REDUCE + rationale |
+| `RetirementRiskManager` | 7 deterministic gates; blocks any AI signal that violates constraints |
+| `ExecutionAgent` | Places LIMIT+DAY orders on Alpaca paper; retry logic |
+| `RetirementScheduler` | Orchestrates daily scans + weekly rebalance |
+| `SyncWorker` | Reconciles DB positions vs Alpaca every 5 minutes |
+| `RebalanceEngine` | Computes category drift and recommendations |
+| `AlertSystem` | Generates price, stop, dividend, and rebalance alerts |
 
 ---
 
-## UI Screens
-
-| Screen | Description |
-|---|---|
-| **⭐ Watchlist** | Live price cards for AAOI/BWIN/DELL/FIGS/SSL — price, % change, volume, ATR, SMA, open position badge, Run Agent / Quote buttons |
-| **Portfolio & Risk** | Account equity, open positions, P&L, sector exposure |
-| **AI Insights** | Last 20 agent signals with rationale and confidence |
-| **Market Movers** | Top gainers, losers, most active (refreshed every 60s) |
-| **Quote Lookup** | Full quote + fundamentals for any ticker |
-| **Audit Journal** | Immutable log of every agent action and risk decision |
-| **Market History** | Stored market data snapshots |
-| **Constraints** | Active risk parameters (read-only display) |
-
----
-
-## Trading Config (Current)
-
-| Parameter | Value |
-|---|---|
-| Watchlist | AAOI, BWIN, DELL, FIGS, SSL |
-| Style | Day trading (in/out same session) |
-| Risk profile | Conservative |
-| Risk per trade | 1% of equity |
-| ATR stop multiplier | 1× (tight intraday) |
-| Max position size | 3% of equity |
-| Max open positions | 3 |
-| Scan interval | Every 20 minutes |
-| Market hours | 09:35–15:40 ET, Mon–Fri |
-| EOD auto-close | 15:45 ET |
-
----
-
-## Risk Engine — 8 Hard Gates
-
-All gates are deterministic math. The LLM cannot influence or bypass any of them.
-
-| Gate | Constraint | Fail Action |
-|---|---|---|
-| 1 | Account drawdown > 10% from HWM | HALT — no new trades |
-| 2 | Daily loss > 3% of equity | HALT — no new trades |
-| 3 | Average daily volume < 5,000,000 | REJECT — LIQUIDITY |
-| 4 | Earnings within 3 days | REJECT — EARNINGS_BLACKOUT |
-| 5 | VIX > 35 (new longs) | REJECT — VIX_MACRO |
-| 6 | Ticker allocation > 3% equity | REDUCE to 3% or REJECT |
-| 7 | Sector exposure > 20% equity | REJECT — SECTOR_CONCENTRATION |
-| 8 | Buying power < required allocation | REJECT — BUYING_POWER |
-
-VIX fetch failure defaults to 99.0 (blocks new longs — fail-safe, not fail-open).
-Earnings fetch failure defaults to 999 days (safe — no blackout triggered on API failure).
-
----
-
-## Agent Definitions
-
-### MarketDataAgent
-- Fetches: price, ATR-14, SMA-20, SMA-50, volume, ^VIX, earnings calendar
-- Source: yfinance (curl_cffi transport, handles Yahoo Finance auth)
-- Cache: 60 seconds at module level (survives across requests)
-- Fail-safes: VIX → 99.0, earnings → 999 days
-
-### StrategyAgent
-- LLM: OpenAI GPT-4o-mini (configurable via `OPENAI_API_KEY`)
-- Fallback: MockSwingLLMClient (deterministic, no API key needed)
-- Output schema: `SignalCreated` (Pydantic) — malformed output → HOLD
-- Context includes: price, technicals, macro regime, portfolio state
-
-### DeterministicRiskManager
-- Pure Python math — zero LLM involvement
-- Configurable via `apply_day_trading_config()` at startup
-- Produces: `RiskApproved` or `RiskRejected` (never raises to execution layer)
-
-### ExecutionAgent
-- Consumes `RiskApproved` events only
-- Staleness check: rejects if signal > 5 minutes old
-- Idempotency: UUID per order (Alpaca `client_order_id`)
-- Retry: exponential backoff on rate limit / network errors
-- Hard stops: insufficient funds, market closed
-
-### MoversAgent (`agents/movers.py`)
-- Primary: `yf.screen("day_gainers" | "day_losers" | "most_actives")`
-- Fallback: 40-ticker watchlist download + % change computation
-- Cache: 2 minutes in-memory
-
-### MarketScheduler (`core/scheduler.py`)
-- Wakes every 60 seconds, checks market hours
-- Triggers agent loop per ticker if `scan_interval` elapsed
-- Fires EOD close at 15:45 ET (day trading mode only)
-- Staggered 10s between tickers to avoid Yahoo Finance throttling
-
----
-
-## Audit Trail
-
-Every agent decision is written to `StoredAuditLog`:
+## Risk Gate Sequence
 
 ```
-time    — ISO timestamp
-agent   — which agent produced the event
-action  — BUY_TO_OPEN | SELL_TO_CLOSE | HOLD | RISK_REJECTED | EOD_CLOSE | ...
-ticker  — equity symbol
-reason  — human-readable explanation
+Signal received (BUY/SELL/HOLD/REDUCE, confidence 0-1)
+        │
+        ▼
+Gate 1: System halt? ──────────────────────────────► REJECT
+        │
+        ▼
+Gate 2: Confidence < 60%? ─────────────────────────► REJECT (LOW_CONFIDENCE)
+        │
+        ▼
+Gate 3: Portfolio drawdown > 20%? ─────────────────► REJECT (PORTFOLIO_DRAWDOWN)
+        │
+        ▼
+Gate 4: Action = HOLD? ────────────────────────────► REJECT (no execution needed)
+        │
+        ▼
+Gate 5: SELL within 30 days of open? ──────────────► REJECT (MIN_HOLD)
+        │
+        ▼
+Gate 6: BUY would exceed 10% concentration? ───────► REJECT (CONCENTRATION)
+        │
+        ▼
+Gate 7: Trailing stop breached? (soft) ────────────► LOG ALERT only, continue
+        │
+        ▼
+Buying power check ────────────────────────────────► REJECT if insufficient
+        │
+        ▼
+Position sizing: 2% of equity / current price = qty
+        │
+        ▼
+RiskApproved → ExecutionAgent → Alpaca paper order
 ```
 
-The audit log is append-only. No record is ever modified or deleted.
+---
+
+## AI Evaluation by Category
+
+### ETFs (VTI, SCHD, QQQ)
+- Primary signal: price vs 52-week mean (DCA opportunity when below)
+- Expense ratio and index composition reviewed
+- Almost never a SELL — ETFs are permanent core holdings
+- Confidence required: 60%+
+
+### Dividend Stocks (JNJ, PG)
+- Primary signals: yield vs 5-year average, payout ratio (<60% healthy)
+- REVIEW flag: payout ratio >80%, dividend cut, 2+ quarters revenue decline
+- Confidence required: 65%+ (slightly higher — individual company risk)
+
+### Growth Stocks (MSFT, NVDA, AAPL)
+- Primary signals: revenue growth acceleration, PEG ratio, moat indicators
+- HOLD when business excellent but P/E stretched beyond 1.5× sector avg
+- REDUCE when growth decelerating materially
+- Confidence required: 65%+
+
+---
+
+## Rebalance Targets
+
+| Category | Target | Tickers |
+|----------|--------|---------|
+| ETF | 40% | VTI, SCHD, QQQ |
+| Dividend | 25% | JNJ, PG |
+| Growth | 35% | MSFT, NVDA, AAPL |
+
+Rebalance recommended when any category drifts >5% from target.
+
+---
+
+## Audit Trail Events
+
+| Event | Agent | Meaning |
+|-------|-------|---------|
+| PROCESSING | Supervisor | Agent loop started for ticker |
+| SYNCED | MarketDataAgent | Price data fetched successfully |
+| PROPOSED | StrategyAgent | LLM recommendation emitted |
+| APPROVED | RiskManager | All gates passed, order sizing complete |
+| REJECTED | RiskManager | Gate failed — reason logged |
+| FILLED | ExecutionAgent | Alpaca paper order confirmed |
+| REBALANCE | RebalanceEngine | Weekly drift recommendation logged |
+| RECONCILED_CLOSE | SyncWorker | Position closed at broker, DB updated |
+| ALERT | AlertSystem | Price/stop/dividend event detected |
+
+---
+
+## UI Tabs
+
+| Tab | Contents |
+|-----|---------|
+| **Portfolio** | Open paper positions, PnL, risk guardrails status |
+| **Watchlist** | Live price cards, daily change, vs SMA%, dividend yield, open position badges |
+| **Rebalancing** | Category allocation vs targets, drift chart, BUY_MORE/TRIM recommendations |
+| **Dividends** | Projected annual income from current holdings |
+| **Alerts** | Price drop, stop breach, dividend risk, rebalance triggers |
+| **AI Advisor** | Full history of AI recommendations with rationale and confidence |
+| **Audit Log** | Immutable event-by-event execution journal |
+| **Research** | On-demand quote + fundamentals for any ticker |

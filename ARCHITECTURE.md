@@ -1,251 +1,175 @@
-# Architecture Deep Dive
+# Architecture — Retirement Portfolio Advisor
 
-## Event-Driven Pipeline
-
-Every trade follows a strict unidirectional flow. The LLM cannot skip steps or touch the broker directly.
+## System Overview
 
 ```
-MarketScheduler (every 20 min, Mon–Fri 09:35–15:40 ET)
-        │  triggers per watchlist ticker
-        ▼
-MarketDataAgent.fetch_market_context(ticker)
-  · yfinance: price, ATR-14, SMA-20/50, volume
-  · yfinance: ^VIX level (fail-safe: defaults to 99.0 if unavailable)
-  · yfinance .calendar: real earnings date (fail-safe: 999 days if unavailable)
-  · Module-level cache TTL: 60s (survives across requests)
-        │
-        ▼
-StrategyAgent.evaluate_context(ticker, technicals, sentiment, fundamentals)
-  · Calls OpenAI GPT-4o-mini (or MockSwingLLMClient if no key)
-  · Returns SignalCreated { BUY | SELL | HOLD, confidence, rationale }
-  · Pydantic schema enforced — malformed LLM output → HOLD fallback
-        │
-        ▼
-DeterministicRiskManager.evaluate_signal(signal, portfolio, market)
-  · Phase 1: Account viability  — drawdown (10%), daily loss (3%), halt flag
-  · Phase 2: Macro regime       — ADV liquidity, earnings blackout (3d), VIX (35)
-  · Phase 3: Concentration      — single ticker cap (3%), sector cap (20%)
-  · Phase 4: Volatility sizing  — 1% equity risk / ATR-stop distance
-  · Returns RiskApproved or RiskRejected
-        │
-        ▼
-ExecutionAgent.execute_approved_risk(risk_event)
-  · Staleness check: rejects signals > 5 minutes old
-  · Idempotency key: UUID per order (Alpaca client_order_id)
-  · Exponential backoff: RateLimitError / NetworkError
-  · Hard stops: InsufficientFundsError / MarketClosedError
-        │
-        ▼
-AlpacaPaperBroker.place_order(order)
-  · Hardcoded paper-api.alpaca.markets URL
-  · Live mode requires explicit code change (not a config flag)
-        │
-        ▼
-SyncWorker (periodic reconciliation)
-  · Broker is always source of truth
-  · Per-share drift = market_value / quantity (not total market_value)
-  · Kill switch if drift > 5% of portfolio
-        │
-        ▼
-EOD Sweep (15:45 ET — day trading mode only)
-  · Closes all open StoredPosition records via broker
-  · Logs each close to StoredAuditLog
+┌─────────────────────────────────────────────────────────┐
+│                    React Frontend                        │
+│  Portfolio │ Watchlist │ Rebalance │ Dividends │ Alerts  │
+│            │ AI Advisor│ Audit Log │ Research           │
+└─────────────────────┬───────────────────────────────────┘
+                      │ SSE stream + REST (X-API-Key)
+┌─────────────────────▼───────────────────────────────────┐
+│                  FastAPI Backend                         │
+│                                                          │
+│  RetirementScheduler                                     │
+│  ├── Daily 10:00 ET → run_agent_loop(ticker) × 8        │
+│  └── Weekly Monday  → _run_rebalance_check()            │
+│                                                          │
+│  Agent Pipeline (per ticker)                            │
+│  MarketDataAgent → FundamentalAgent → StrategyAgent     │
+│       │                                    │            │
+│  yfinance (thread pool)            GPT-4o-mini          │
+│       │                                    │            │
+│  MarketContext + Fundamentals    SignalCreated           │
+│                                    │                    │
+│                      RetirementRiskManager              │
+│                      7 deterministic gates              │
+│                                    │                    │
+│                         RiskApproved / RiskRejected     │
+│                                    │                    │
+│                           ExecutionAgent               │
+│                           Alpaca Paper API             │
+│                                                          │
+│  Reconciliation Loop (every 5 min)                      │
+│  Alpaca positions → DB sync + price refresh             │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Scheduler
+## Agent Pipeline
 
-`core/scheduler.py` — `MarketScheduler` class
+### 1. MarketDataAgent
+- Fetches OHLCV, SMA-20, SMA-50, ATR-14, volume via `yf.download()`
+- All calls run in `loop.run_in_executor(None, ...)` — never blocks the event loop
+- 60-second module-level cache per ticker
+
+### 2. FundamentalAgent
+- Fetches P/E, P/B, dividend yield, payout ratio, revenue growth, debt/equity
+- 6-hour cache (fundamentals change slowly)
+- Also runs in thread pool
+
+### 3. StrategyAgent (LLM)
+- System prompt: `RETIREMENT_ADVISOR_SYSTEM_PROMPT`
+- Evaluates each ticker by category (ETF / Dividend / Growth)
+- Category injected into every user prompt
+- Output: `SignalCreated` with action (BUY/SELL/HOLD/REDUCE), confidence, rationale
+
+### 4. RetirementRiskManager (7 gates, in order)
+```
+Gate 1: System halt check
+Gate 2: Confidence < 60% → REJECT
+Gate 3: Portfolio drawdown > 20% → PAUSE new buys
+Gate 4: Action routing (BUY/SELL/REDUCE/HOLD)
+Gate 5: Min hold period < 30 days → REJECT sell
+Gate 6: Concentration > 10% of portfolio → REJECT buy
+Gate 7: Trailing stop alert (soft — log only, never block)
++ Buying power check
+```
+
+### 5. ExecutionAgent
+- Submits LIMIT+DAY orders to Alpaca paper API
+- Exponential backoff retry (3 attempts)
+- Persists filled position to DB
+
+---
+
+## Scheduler Cadence
 
 ```
-Every 60 seconds, _tick() checks:
-
-  ┌─ Weekend? ─────────────────────────────────────────────── skip
-  │
-  ├─ Before 09:35 ET? ─────────────────────────────────────── reset EOD flag, skip
-  │
-  ├─ After 15:45 ET and EOD not fired? (day trading) ──────── fire close_all_positions()
-  │                                                            set _eod_fired = True
-  │
-  ├─ Outside 09:35–15:40 ET (regular hours only mode)? ────── skip
-  │
-  ├─ Style = monitor_only? ────────────────────────────────── skip
-  │
-  └─ For each ticker in watchlist:
-       If now - last_scan[ticker] >= scan_interval (20 min):
-         asyncio.create_task(run_agent(ticker))
-         last_scan[ticker] = now
-         await asyncio.sleep(10)    ← stagger to avoid Yahoo Finance burst
+Every 60s: scheduler tick
+  ├── Is trading day (Mon–Fri)?
+  ├── Is 10:00–10:15 ET?
+  │   ├── Yes + not scanned today → fire agent loop for all 8 tickers
+  │   └── Yes + Monday + not rebalanced today → fire rebalance check
+  └── No → sleep
 ```
 
 ---
 
-## Day Trading Configuration
+## Rebalance Engine
 
-Applied at startup via `apply_day_trading_config(RISK_MANAGER)`:
-
-| Parameter | Day Trading | Default (Swing) |
-|---|---|---|
-| `risk_per_trade_pct` | 1% | 1% |
-| `ATR_MULTIPLIER` | **1.0×** | 2.0× |
-| `MAX_POSITION_PCT` | **3%** | 5% |
-| `MAX_OPEN_POSITIONS` | **3** | 10 |
-| `scan_interval_minutes` | 20 | — |
-| `eod_close_time_et` | 15:45 | — |
-
-### Position Sizing Math (Day Trading)
 ```
-risk_dollars    = total_equity × 0.01           # 1% risk
-stop_distance   = 1.0 × ATR_14                  # 1× ATR (tighter)
-raw_shares      = floor(risk_dollars / stop_distance)
-total_alloc     = raw_shares × current_price
+Current positions → category totals (ETF / Dividend / Growth)
+Target allocations: ETF 40% / Dividend 25% / Growth 35%
 
-if total_alloc / total_equity > 0.03:           # Cap at 3% nominal
-    raw_shares = floor(total_equity × 0.03 / current_price)
-
-if total_alloc > buying_power:
-    → BUYING_POWER violation
+For each category:
+  drift = current_pct - target_pct
+  if |drift| > 5%:
+    drift < 0 → BUY_MORE (underweight)
+    drift > 0 → TRIM (overweight)
+  else:
+    ON_TARGET
 ```
 
 ---
 
-## Movers Agent
+## Alert System
 
-`agents/movers.py` — two-tier strategy with 2-minute cache:
+| Alert Type | Trigger | Severity |
+|-----------|---------|---------|
+| PRICE_DROP | Daily price change ≤ -5% | WARNING |
+| PRICE_DROP | Daily price change ≤ -10% | CRITICAL |
+| TRAILING_STOP | Position down ≥ 15% from entry | CRITICAL |
+| DIVIDEND | Payout ratio > 85% | WARNING |
+| REBALANCE | Category drift > 5% | ACTION |
+| DRAWDOWN | 52-week high drawdown ≥ 20% | ACTION (buy opportunity) |
+
+---
+
+## Data Flow
 
 ```
-PRIMARY: yf.screen("day_gainers" | "day_losers" | "most_actives")
-  · Uses yfinance's built-in curl_cffi transport
-  · Handles Yahoo Finance cookie/crumb auth internally
-  · Returns up to 10 tickers per category
+Startup:
+  DB init → apply_retirement_config(RISK_MANAGER) → RetirementScheduler.run()
+                                                   → reconciliation loop
 
-FALLBACK (fires if screener returns empty or throws):
-  yf.download(40-ticker watchlist, period="5d", interval="1d")
-  · Computes % change: (close[-1] - close[-2]) / close[-2]
-  · Sorts for top/bottom gainers and highest volume
-  · Covers: AAPL MSFT NVDA GOOGL AMZN META TSLA + 33 others
+Per ticker scan:
+  fetch_market_context(ticker)   [thread pool, 60s cache]
+  fetch_fundamentals(ticker)     [thread pool, 6hr cache]
+  refresh open position prices   [DB update]
+  check_and_generate_alerts()    [price drop, stop breach]
+  generate_technical_summary()
+  fetch_news_and_sentiment()
+  StrategyAgent.evaluate_context() → LLM call
+  RetirementRiskManager.evaluate_signal()
+  ExecutionAgent.execute_approved_risk()
+  persist position to DB
 
-Cache: 120 seconds (module-level dict with _ts timestamp)
+Every 5 min:
+  _reconcile_positions_with_broker()
+  → update prices from Alpaca source of truth
+  → close DB positions not found at broker
+
+Weekly (Monday):
+  compute_rebalance_report()
+  → log recommendations to audit trail
 ```
 
 ---
 
-## Schema Boundaries
+## Infrastructure
 
-Each layer communicates only via typed Pydantic schemas:
-
-| Schema | Producer | Consumer |
-|---|---|---|
-| `SignalCreated` | StrategyAgent | RiskManager |
-| `RiskApproved` | RiskManager | ExecutionAgent |
-| `RiskRejected` | RiskManager | app.py (logs) |
-| `OrderRequest` | ExecutionAgent | BrokerAPI |
-| `OrderResponseStatus` | BrokerAPI | ExecutionAgent |
-
----
-
-## Database Models
-
-```
-StoredMarketData   — yfinance snapshots per agent run
-StoredPosition     — open/closed trades (replaces in-memory list)
-StoredAuditLog     — immutable execution journal
-StoredAgentInsight — LLM signals with full context
-```
-
-SQLite in dev, PostgreSQL via `DATABASE_URL` in production.
-
----
-
-## Security Architecture
-
-```
-Internet
-    │
-    ▼
-AWS ALB (internet-facing, us-east-1)
-    │
-    ▼
-Kubernetes Ingress (agentic-trading-ingress)
-    │   /api/*  → agentic-trading-backend:8000
-    │   /health → agentic-trading-backend:8000
-    │   /*       → agentic-trading-frontend:80
-    ▼
-FastAPI — require_api_key()
-    │   X-API-Key header (all endpoints)
-    │   ?api_key= query param (SSE EventSource)
-    ▼
-sanitize_ticker() — regex ^[A-Z]{1,5}$
-    ▼
-Rate limiter — 10s cooldown per ticker on /api/trigger
-```
-
-Secret flow:
-```
-GitHub Secrets (7 secrets)
-    │  injected into workflow at runtime
-    ▼
-Kubernetes Secret (trading-app-secrets)
-    │  secretKeyRef in pod spec
-    ▼
-Pod environment variables
-    │  os.getenv() / import.meta.env
-    ▼
-Application runtime — never logged, never written to disk
-```
-
----
-
-## Frontend Real-Time Architecture
-
-### SSE Stream (`/api/stream`)
-```
-Frontend opens one persistent EventSource connection
-Backend pushes every 2 seconds:
-  {
-    logs:          last 20 audit entries,
-    insights:      last 20 agent signals,
-    positions:     all open positions,
-    account_value: sum of open position PnL
-  }
-```
-
-### Polling (slower-changing data)
-```
-/api/movers         — every 60s  (backend caches 120s)
-/api/quote/{ticker} — on demand  (Quote tab + Watchlist cards every 30s)
-/api/market-data    — every 30s  (History tab)
-```
+| Component | Spec |
+|-----------|------|
+| EKS cluster | `agentic-trading-cluster`, us-east-1, t3.medium |
+| Backend | 2 replicas, 256Mi–512Mi RAM, 250m–500m CPU |
+| Frontend | 2 replicas, Nginx, 128Mi–256Mi RAM |
+| Database | SQLite (pod-local, ephemeral) |
+| Container registry | ECR (`agentic-trading-backend`, `agentic-trading-frontend`) |
+| Load balancer | AWS ALB via `aws-load-balancer-controller` |
+| Secrets | Kubernetes `trading-app-secrets` |
 
 ---
 
 ## CI/CD Pipeline
 
 ```
-git push → master
-    │
-    ▼
-Job 1: Lint & Syntax Check (~2 min)
-  · python -m py_compile on all backend files
-  · npm run lint on frontend (warnings allowed, errors fail)
-    │
-    ▼
-Job 2: Build & Push to ECR (~5 min)
-  · docker buildx with GitHub Actions cache
-  · Tags: {git-sha} + latest
-  · ECR scan-on-push enabled
-    │
-    ▼
-Job 3: Provision EKS Cluster (~20 min first run, ~2 min if exists)
-  · eksctl create cluster (idempotent — skips if already exists)
-  · AWS Load Balancer Controller via Helm
-  · Namespace + K8s secrets
-    │
-    ▼
-Job 4: Deploy (~5 min)
-  · Rolling update (maxSurge=1, maxUnavailable=0)
-  · kubectl rollout status (waits for healthy)
-  · ALB URL printed to summary
-  · Health check: GET /health → HTTP 200
+Push to master
+  ├── Job 1: Lint (Python syntax, ESLint)        ~2 min
+  ├── Job 2: Build + push to ECR                  ~4 min
+  ├── Job 3: Provision EKS (idempotent)           ~3 min
+  └── Job 4: Deploy + rollout wait                ~3 min
+                                           Total: ~8 min
 ```

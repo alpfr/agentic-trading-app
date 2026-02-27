@@ -1,130 +1,49 @@
-# SOC 2 Compliance & Security Overview
+# Security & Compliance Notes
 
-This document describes how the Agentic Trading App aligns with the five AICPA Trust Service Criteria for SOC 2.
+## Authentication
 
----
+- All API endpoints require `X-API-Key` header
+- Key stored as Kubernetes secret, injected at runtime
+- Frontend receives key via Vite build-time env var (`VITE_API_KEY`)
+- SSE endpoint uses query param (`?api_key=...`) — EventSource API limitation
 
-## 1. Security — Protection Against Unauthorized Access
+## Secrets Management
 
-### Authentication
-- All API endpoints protected by `X-API-Key` header validation
-- `require_api_key()` FastAPI dependency applied globally
-- SSE endpoint accepts `?api_key=` query param (required for browser `EventSource`)
-- Key stored in Kubernetes Secret — not in environment files or source code
+| Secret | Storage | Rotation |
+|--------|---------|---------|
+| OpenAI API key | GitHub Actions (NaCl encrypted) + K8s secret | Rotate in GitHub Settings → Secrets |
+| Alpaca credentials | GitHub Actions + K8s secret | Rotate via `kubectl create secret --dry-run apply` |
+| APP_API_KEY | GitHub Actions + K8s secret | Generate new random string |
 
-### Input Validation
-- All user-supplied ticker symbols validated against `^[A-Z]{1,5}$` regex
-- `sanitize_ticker()` applied before any DB write or external API call
-- Pydantic schema validation on all request bodies
+## Data Handling
 
-### Rate Limiting
-- `/api/trigger` enforces 10-second per-ticker cooldown (in-process token bucket)
-- Yahoo Finance calls cached to avoid external API abuse
+- No personally identifiable information stored
+- All position data is paper trading — no real financial data
+- SQLite database is pod-local and ephemeral (resets on pod restart)
+- No external logging services in current deployment
 
-### Secret Management
-- All credentials (OpenAI, Alpaca, App API key, DB URL) stored exclusively in Kubernetes Secrets
-- Secrets injected as pod environment variables via `secretKeyRef`
-- No secrets in `k8s-deploy.yaml`, no secrets in source control
-- AWS Account ID never committed — substituted at deploy time via `envsubst`
-- GitHub Actions secrets encrypted with repo public key (NaCl sealed box)
+## Rate Limiting
 
-### Network Security
-- Backend exposed only as `ClusterIP` — not directly reachable from internet
-- All internet traffic routed through AWS ALB
-- ECR image scanning enabled on push (detects CVEs in OS and dependencies)
-- CORS origins configurable via `CORS_ALLOWED_ORIGINS` environment variable
+- yfinance calls: 10-second stagger between tickers in scheduler
+- 60-second market data cache per ticker
+- 6-hour fundamental data cache per ticker
+- `/api/trigger`: 10-second cooldown per ticker
 
-### Container Security
-- Minimal base images (python:3.11-slim, node:20-alpine)
-- No root process in containers
-- Read-only filesystem where possible
-- Resource limits enforced (CPU: 250m–1000m, Memory: 512Mi–1Gi backend)
+## AI Safety Constraints
 
----
-
-## 2. Availability — System Uptime and Resilience
-
-### Kubernetes HA
-- 2 replicas for both backend and frontend deployments
-- Rolling update strategy: `maxSurge=1, maxUnavailable=0` — zero downtime deploys
-- EKS managed node group autoscales 1–4 nodes based on demand
-
-### Health Probes
-- `livenessProbe`: GET `/health` every 20s — restarts unhealthy pods automatically
-- `readinessProbe`: GET `/health` every 10s — removes pods from load balancer before restart
-- Both probes configured on backend and frontend
-
-### Load Balancing
-- AWS ALB routes traffic only to healthy pods
-- Multi-AZ node group distributes workload across availability zones
-
-### Data Persistence
-- SQLite (dev): ephemeral — lost on pod restart
-- PostgreSQL via `DATABASE_URL` (production): persistent, survives pod restarts
-- Audit logs are append-only — no accidental data loss from application code
-
----
-
-## 3. Processing Integrity — Accurate and Complete Processing
-
-### Deterministic Risk Engine
-- All risk calculations use pure Python math — no LLM, no randomness
-- 8 hard gates evaluated in sequence before any order reaches the broker
-- `RiskRejected` events written to audit log with specific failure reason
-- LLM signal (HOLD / BUY / SELL) cannot bypass any gate
-
-### Idempotency
-- Each order assigned a UUID `client_order_id` before broker submission
-- Duplicate submissions (e.g., from retries) rejected by Alpaca based on `client_order_id`
-
-### Reconciliation
-- `SyncWorker` periodically compares broker positions vs internal DB positions
-- Broker is always the source of truth
-- Drift > 5% of portfolio triggers kill switch
-
-### Fail-Safes
-- VIX fetch failure → defaults to 99.0 (blocks new longs — fail-safe, not fail-open)
-- Earnings date fetch failure → defaults to 999 days (no blackout triggered)
-- LLM malformed output → defaults to HOLD signal
-
----
-
-## 4. Confidentiality — Protection of Sensitive Information
-
-### Data Classification
-| Data | Classification | Storage |
-|---|---|---|
-| API keys | Secret | Kubernetes Secrets only |
-| Trade history | Internal | SQLite/PostgreSQL (encrypted at rest in RDS) |
-| Audit logs | Internal | DB — append-only |
-| Market data | Public | Cached in DB for performance |
-
-### Logging Policy
-- No API keys, no secrets logged anywhere in application code
-- No PII collected or stored
-- Audit logs contain only: timestamp, agent, action, ticker, reason
-
-### Transmission Security
-- HTTPS recommended for production (configure ALB SSL termination + ACM certificate)
-- Internal cluster traffic (pod-to-pod) stays within VPC — never traverses internet
-
----
-
-## 5. Privacy — Personal Information Handling
-
-This application does not collect, store, or process personal information (PII) in its default configuration. No user accounts, no personal data beyond what Alpaca stores in its own platform.
-
----
+The LLM (GPT-4o-mini) cannot:
+- Bypass any of the 7 risk gates — they are pure Python math
+- Directly call the broker — all execution goes through `ExecutionAgent`
+- Access the database — reads/writes only via `app.py` endpoints
+- Hallucinate a trade — JSON schema is strictly validated by Pydantic before risk evaluation
 
 ## Recommended Production Hardening
 
-| Item | Current State | Recommended |
-|---|---|---|
-| TLS/HTTPS | HTTP (ALB) | Add ACM cert + HTTPS listener to ALB |
-| WAF | None | Add AWS WAF to ALB for IP allowlist / rate limiting |
-| Database encryption | SQLite (unencrypted) | RDS PostgreSQL with encryption at rest |
-| Secrets rotation | Manual | AWS Secrets Manager with automatic rotation |
-| Network policies | None | Add Kubernetes NetworkPolicy to restrict pod-to-pod traffic |
-| Multi-replica rate limit | In-process (per pod) | Replace with Redis TTL key for cross-replica enforcement |
-| Image signing | None | Add cosign image signing in CI/CD pipeline |
-| Audit log integrity | DB rows | Export to append-only S3 bucket with object lock |
+| Item | Current | Recommended |
+|------|---------|-------------|
+| Database | SQLite (ephemeral) | PostgreSQL RDS with persistent EBS |
+| TLS | ALB HTTP | ALB HTTPS with ACM certificate |
+| Auth | Single API key | JWT with expiry + refresh |
+| Logging | Pod stdout | CloudWatch Logs |
+| Monitoring | None | Prometheus + Grafana |
+| Secret rotation | Manual | AWS Secrets Manager with auto-rotation |
