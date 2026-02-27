@@ -8,8 +8,12 @@ An AI-powered retirement investment research tool — analyzes stocks and ETFs, 
 
 ## Live Deployment
 
+**URL:** https://agentictradepulse.opssightai.com
+
+
 | Item | Value |
 |------|-------|
+| URL | https://agentictradepulse.opssightai.com |
 | Platform | AWS EKS (us-east-1) |
 | Cluster | `agentic-trading-cluster` |
 | Namespace | `agentic-trading-platform` |

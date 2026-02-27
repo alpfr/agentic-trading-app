@@ -154,6 +154,8 @@ Weekly (Monday):
 | Component | Spec |
 |-----------|------|
 | EKS cluster | `agentic-trading-cluster`, us-east-1, t3.medium |
+| Domain | agentictradepulse.opssightai.com |
+| TLS | ACM wildcard `*.opssightai.com` |
 | Backend | 2 replicas, 256Mi–512Mi RAM, 250m–500m CPU |
 | Frontend | 2 replicas, Nginx, 128Mi–256Mi RAM |
 | Database | SQLite (pod-local, ephemeral) |

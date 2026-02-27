@@ -4,64 +4,107 @@
 
 | Control | Status | Implementation |
 |---------|--------|---------------|
-| TLS / Encryption in transit | ✅ Ready | ALB HTTPS + ACM + TLS 1.3 minimum |
-| Authentication | ✅ Implemented | JWT (15 min) + refresh tokens (7 day) |
-| MFA | ✅ Implemented | TOTP RFC 6238 (Google Authenticator) |
+| TLS / Encryption in transit | ✅ Active | ALB HTTPS + ACM wildcard `*.opssightai.com` + TLS 1.3 |
+| Authentication | ✅ Implemented | JWT access (15 min) + refresh tokens (7 day) |
+| MFA | ✅ Implemented | TOTP RFC 6238 — Google Authenticator / Authy |
 | Rate limiting | ✅ Implemented | Per-IP sliding window via slowapi |
-| Security headers | ✅ Implemented | HSTS, CSP, X-Frame-Options, etc. |
-| Audit logging | ✅ Implemented | Structured JSON → stdout → CloudWatch |
-| CORS | ✅ Hardened | Env-driven, no localhost default in prod |
-| Secrets management | ✅ Implemented | K8s secrets, never in source code |
-| Token revocation | ✅ Implemented | JTI revocation list; logout invalidates |
-| Encryption at rest | ⚠️ Partial | SQLite plain; upgrade path: encrypted RDS |
+| Security headers | ✅ Implemented | HSTS, CSP, X-Frame-Options, Referrer-Policy, etc. |
+| Audit logging | ✅ Implemented | Structured JSON → stdout → CloudWatch Logs |
+| CORS | ✅ Hardened | Locked to `https://agentictradepulse.opssightai.com` |
+| Secrets management | ✅ Implemented | Kubernetes secrets — never in source control |
+| Token revocation | ✅ Implemented | JTI revocation list; logout invalidates immediately |
+| Encryption at rest | ⚠️ Partial | SQLite plain; upgrade path: encrypted RDS (see §9) |
 | Secrets rotation | ⚠️ Manual | K8s secret update + pod restart |
-| VPC / network isolation | ⚠️ Basic | EKS default VPC; no private subnets yet |
-| Log retention | ⚠️ Setup needed | CloudWatch log group + retention policy |
+| VPC / network isolation | ⚠️ Basic | EKS default VPC; private subnets recommended |
+| Log retention | ⚠️ Setup needed | CloudWatch log group + retention policy (see §6) |
 
 ---
 
 ## 1. TLS / Encryption in Transit
 
-### Current Setup
-ALB is configured with:
-- `listen-ports: '[{"HTTP":80},{"HTTPS":443}]'`
-- `ssl-redirect: '443'` — all HTTP traffic redirected to HTTPS
-- `ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06` — TLS 1.2 minimum, TLS 1.3 preferred
+### Active Configuration
 
-### Certificate & Domain
+| Setting | Value |
+|---------|-------|
+| Certificate | ACM wildcard `*.opssightai.com` |
+| Covers | `agentictradepulse.opssightai.com` + all future subdomains |
+| HTTP redirect | Port 80 → 443 (enforced at ALB) |
+| TLS policy | `ELBSecurityPolicy-TLS13-1-2-2021-06` |
+| Minimum TLS version | TLS 1.2 |
+| Preferred TLS version | TLS 1.3 |
+| Invalid header fields | Dropped at ALB |
 
-The certificate for `opssightai.com` already exists in ACM.
-The CI/CD pipeline **automatically resolves** the cert ARN from ACM by domain name —
-no manual ARN copying needed.
+### Certificate Management
 
-To verify the cert is found:
+The wildcard cert `*.opssightai.com` is stored in ACM with SANs:
+- `opssightai.com`
+- `*.opssightai.com`
+
+The CI/CD pipeline **auto-resolves** the cert ARN from ACM on every deploy — no manual ARN configuration needed.
+
+Auto-resolve lookup order in `deploy.yml`:
+1. Exact match: primary domain == `*.opssightai.com` + Status `ISSUED`
+2. SAN scan: any `ISSUED` cert whose SubjectAlternativeNames includes `*.opssightai.com`
+3. Fallback: any `ISSUED` cert containing `opssightai.com` in DomainName
+
+Override by setting `ACM_CERT_ARN` in GitHub Secrets (bypasses auto-resolve).
+
+### Cert Renewal
+
+ACM **auto-renews** certificates 60 days before expiry as long as the DNS validation CNAME record remains in place. Never remove that CNAME record.
+
+Verify renewal eligibility:
 ```bash
-aws acm list-certificates --region us-east-1 \
-  --query "CertificateSummaryList[?contains(DomainName,'opssightai.com')]" \
+aws acm describe-certificate \
+  --certificate-arn <cert-arn> \
+  --region us-east-1 \
+  --query "Certificate.{Status:Status,RenewalEligibility:RenewalEligibility}" \
   --output table
 ```
 
-#### DNS — point the subdomain to the ALB
-After first deployment, create a CNAME in your DNS provider:
+### If a Cert Fails Validation (`VALIDATION_TIMED_OUT`)
 
-```
-agentictradepulse.opssightai.com  CNAME  <ALB-hostname>
-```
-
-Get the ALB hostname:
+The DNS CNAME was not added within the 72-hour window. Fix:
 ```bash
-kubectl get ingress agentic-trading-ingress \
-  -n agentic-trading-platform \
-  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
-```
+# 1. Delete the failed cert
+aws acm delete-certificate --certificate-arn <failed-arn> --region us-east-1
 
-If your DNS is on Route 53, use an **Alias record** instead of CNAME:
-```bash
-# Get your hosted zone ID
-aws route53 list-hosted-zones \
-  --query "HostedZones[?Name=='opssightai.com.'].Id" --output text
+# 2. Request a new wildcard cert
+aws acm request-certificate \
+  --domain-name opssightai.com \
+  --subject-alternative-names "*.opssightai.com" \
+  --validation-method DNS \
+  --region us-east-1
 
-# Then create an Alias A record pointing to the ALB in the Route 53 console
+# 3. Get the validation CNAME immediately
+aws acm describe-certificate \
+  --certificate-arn <new-arn> \
+  --region us-east-1 \
+  --query "Certificate.DomainValidationOptions[0].ResourceRecord" \
+  --output table
+
+# 4. Add the CNAME to Route 53 (replace NAME and VALUE from step 3)
+ZONE_ID=$(aws route53 list-hosted-zones \
+  --query "HostedZones[?Name=='opssightai.com.'].Id" \
+  --output text | cut -d'/' -f3)
+
+aws route53 change-resource-record-sets \
+  --hosted-zone-id $ZONE_ID \
+  --change-batch "{
+    \"Changes\": [{
+      \"Action\": \"CREATE\",
+      \"ResourceRecordSet\": {
+        \"Name\": \"<NAME>\",
+        \"Type\": \"CNAME\",
+        \"TTL\": 300,
+        \"ResourceRecords\": [{\"Value\": \"<VALUE>\"}]
+      }
+    }]
+  }"
+
+# 5. Wait for ISSUED (2–5 min on Route 53)
+aws acm describe-certificate --certificate-arn <new-arn> \
+  --region us-east-1 --query "Certificate.Status" --output text
 ```
 
 ---
@@ -72,47 +115,50 @@ aws route53 list-hosted-zones \
 Replaced the static single API key model with a full JWT session system.
 
 ```
-POST /api/auth/login
-  { username, password }
+POST /api/auth/login  { username, password }
   → Password validated (bcrypt)
-  → If MFA enabled: returns { mfa_required: true, session_token }
-  → If MFA disabled: returns { access_token, refresh_token }
+  → MFA enabled: returns { mfa_required: true, session_token }
+  → MFA disabled: returns { access_token, refresh_token }
 
-POST /api/auth/mfa/verify
-  { session_token, totp_code }
+POST /api/auth/mfa/verify  { session_token, totp_code }
   → TOTP code verified (RFC 6238, ±30s window)
   → Returns { access_token, refresh_token }
 
-GET/POST <any protected endpoint>
+GET/POST <protected endpoint>
   Authorization: Bearer <access_token>
-  → JWT decoded, expiry verified, JTI checked against revocation list
-  → Rejected with 401 if expired, revoked, or invalid
+  → JWT decoded, expiry checked, JTI checked vs revocation list
+  → 401 if expired, revoked, or invalid signature
 ```
 
 ### Token Configuration
-| Parameter | Value | Override env var |
-|-----------|-------|-----------------|
-| Access token TTL | 15 minutes | `JWT_ACCESS_TTL_MINUTES` |
-| Refresh token TTL | 7 days | `JWT_REFRESH_TTL_DAYS` |
+
+| Parameter | Value | Override |
+|-----------|-------|---------|
+| Access token TTL | 15 minutes | `JWT_ACCESS_TTL_MINUTES` env var |
+| Refresh token TTL | 7 days | `JWT_REFRESH_TTL_DAYS` env var |
 | Algorithm | HS256 | — |
-| Signing key | 64-byte random hex | `JWT_SECRET` |
+| Signing key | 64-byte random hex | `JWT_SECRET` K8s secret |
 
 ### Backward Compatibility
-The `X-API-Key` header is still accepted for:
+`X-API-Key` header still accepted for:
 - SSE stream (`/api/stream?api_key=...`) — EventSource API cannot set headers
 - Service-to-service calls using the legacy key
 
 ### Initial Admin Setup
 ```bash
-# 1. Generate a bcrypt password hash
+# 1. Generate bcrypt password hash
 python3 -c "from passlib.hash import bcrypt; print(bcrypt.hash('your-strong-password'))"
 
-# 2. Add to K8s secret
+# 2. Set in K8s secret
 kubectl create secret generic trading-app-secrets \
   --namespace=agentic-trading-platform \
   --from-literal=admin-username="admin" \
   --from-literal=admin-password-hash="<bcrypt-hash>" \
+  --from-literal=jwt-secret="$(openssl rand -hex 64)" \
   --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl rollout restart deployment/agentic-trading-backend \
+  -n agentic-trading-platform
 ```
 
 ---
@@ -121,26 +167,22 @@ kubectl create secret generic trading-app-secrets \
 
 ### Protocol
 TOTP (Time-based One-Time Password) per RFC 6238.
-Compatible with: Google Authenticator, Authy, 1Password, Bitwarden, and any RFC 6238 client.
+Compatible with: Google Authenticator, Authy, 1Password, Bitwarden.
 
-### Enabling MFA
+### Enrolling MFA
 
-**Step 1: Generate the TOTP secret**
 ```bash
-# Login first, then:
+# Step 1: Login and call setup endpoint
 curl -H "Authorization: Bearer <access_token>" \
   https://agentictradepulse.opssightai.com/api/auth/mfa/setup
 
-# Response:
+# Response includes:
 # {
 #   "totp_secret": "JBSWY3DPEHPK3PXP",
-#   "provisioning_uri": "otpauth://totp/RetirementAdvisor:admin?secret=...",
-#   ...
+#   "provisioning_uri": "otpauth://totp/RetirementAdvisor:admin?secret=..."
 # }
-```
 
-**Step 2: Store the secret in K8s**
-```bash
+# Step 2: Store the secret in K8s
 kubectl create secret generic trading-app-secrets \
   --namespace=agentic-trading-platform \
   --from-literal=admin-totp-secret="JBSWY3DPEHPK3PXP" \
@@ -148,51 +190,32 @@ kubectl create secret generic trading-app-secrets \
 
 kubectl rollout restart deployment/agentic-trading-backend \
   -n agentic-trading-platform
-```
 
-**Step 3: Scan the QR code**
-Encode `provisioning_uri` as a QR code and scan with your authenticator app.
-```bash
-# Install qrencode and generate QR in terminal:
-qrencode -t ANSIUTF8 "otpauth://totp/..."
-```
-
-**Step 4: MFA is now active**
-Every login requires the 6-digit TOTP code after password verification.
-The session token for the MFA step expires in 5 minutes.
-
-### MFA Flow Diagram
-```
-Login → password OK → session_token (5 min TTL)
-             ↓
-        /api/auth/mfa/verify
-             ↓
-        TOTP code valid?
-         Yes → access_token + refresh_token
-         No  → 401 + audit log "MFA_FAILED"
+# Step 3: Scan the provisioning_uri as QR code
+# qrencode -t ANSIUTF8 "otpauth://totp/..."
 ```
 
 ---
 
 ## 4. Rate Limiting
 
-All endpoints are protected by per-IP sliding window rate limits.
+Per-IP sliding window enforced on all endpoints:
 
 | Tier | Endpoints | Limit |
 |------|-----------|-------|
 | Auth | `/api/auth/*` | 5 req/min |
 | Read | GET endpoints | 60 req/min |
-| Write | POST/PUT/DELETE | 10 req/min |
+| Write | POST / PUT / DELETE | 10 req/min |
 | Global | All | 120 req/min |
 
-On limit breach: `429 Too Many Requests` with `Retry-After: 60` header.
-Every breach is logged to the security audit log with IP and path.
+On breach: `429 Too Many Requests` + `Retry-After: 60` header.
+Every breach logged to security audit log with IP and path.
 
 ---
 
 ## 5. Security Response Headers
 
-Every HTTP response from the backend includes:
+Every HTTP response includes:
 
 | Header | Value | Protection |
 |--------|-------|-----------|
@@ -200,10 +223,9 @@ Every HTTP response from the backend includes:
 | `X-Content-Type-Options` | `nosniff` | Prevents MIME sniffing |
 | `X-Frame-Options` | `DENY` | Prevents clickjacking |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` | Limits referrer leakage |
-| `Permissions-Policy` | `camera=(), microphone=(), geolocation=()` | Disables unused browser APIs |
+| `Permissions-Policy` | `camera=(), microphone=(), geolocation=()` | Disables browser APIs |
 | `Content-Security-Policy` | See below | XSS mitigation |
 
-**CSP policy:**
 ```
 default-src 'self';
 connect-src 'self';
@@ -219,10 +241,11 @@ frame-ancestors 'none';
 ## 6. Audit Logging
 
 ### Format
-Every security event is emitted as a single-line JSON object to stdout:
+JSON-Lines to stdout → Kubernetes → CloudWatch Logs:
+
 ```json
 {
-  "timestamp": "2026-02-27T18:00:00.000Z",
+  "timestamp": "2026-02-27T20:00:00.000Z",
   "service": "retirement-advisor",
   "log_type": "security_audit",
   "event": "LOGIN_SUCCESS",
@@ -235,25 +258,21 @@ Every security event is emitted as a single-line JSON object to stdout:
 ```
 
 ### Events Logged
+
 | Event | Trigger |
 |-------|---------|
-| `LOGIN_SUCCESS` | Password + MFA verified |
-| `LOGIN_FAILED` | Wrong username or password |
-| `MFA_CHALLENGE_ISSUED` | Password OK, TOTP prompt sent |
-| `MFA_SUCCESS` | TOTP code verified |
-| `MFA_FAILED` | Wrong or expired TOTP code |
-| `TOKEN_ISSUED` | New access or refresh token created |
-| `TOKEN_REFRESHED` | Refresh token exchanged for new access token |
-| `TOKEN_REVOKED` | Token explicitly revoked (logout or rotation) |
+| `LOGIN_SUCCESS` / `LOGIN_FAILED` | Password check result |
+| `MFA_CHALLENGE_ISSUED` | Password OK — TOTP prompt sent |
+| `MFA_SUCCESS` / `MFA_FAILED` | TOTP code result |
+| `TOKEN_ISSUED` / `TOKEN_REFRESHED` / `TOKEN_REVOKED` | Token lifecycle |
 | `TOKEN_INVALID` | Expired, malformed, or tampered token |
-| `API_KEY_ACCEPTED` | Legacy API key auth succeeded |
-| `API_KEY_REJECTED` | Invalid API key presented |
+| `API_KEY_ACCEPTED` / `API_KEY_REJECTED` | Legacy API key auth |
 | `LOGOUT` | Explicit logout |
 | `RATE_LIMIT_BREACH` | IP exceeded rate limit |
 
-### Shipping to CloudWatch
+### CloudWatch Setup
+
 ```bash
-# Create a log group with 90-day retention
 aws logs create-log-group \
   --log-group-name /retirement-advisor/security-audit \
   --region us-east-1
@@ -261,78 +280,76 @@ aws logs create-log-group \
 aws logs put-retention-policy \
   --log-group-name /retirement-advisor/security-audit \
   --retention-in-days 90
+```
 
-# Add fluent-bit or CloudWatch agent to EKS to ship pod stdout
-# Recommended: EKS add-on "amazon-cloudwatch-observability"
+Install the EKS CloudWatch observability add-on to ship pod stdout automatically:
+```bash
+aws eks create-addon \
+  --cluster-name agentic-trading-cluster \
+  --addon-name amazon-cloudwatch-observability \
+  --region us-east-1
 ```
 
 ---
 
 ## 7. CORS
 
-CORS is driven entirely by the `CORS_ALLOWED_ORIGINS` environment variable.
-There is **no localhost fallback** in production deployments.
+Locked to `https://agentictradepulse.opssightai.com`.
+No localhost default in production — `CORS_ALLOWED_ORIGINS` env var must be set explicitly.
 
 ```bash
-# Set in K8s secret:
+# Update via K8s secret
 kubectl create secret generic trading-app-secrets \
+  --namespace=agentic-trading-platform \
   --from-literal=cors-allowed-origins="https://agentictradepulse.opssightai.com" \
-  ...
+  --dry-run=client -o yaml | kubectl apply -f -
 ```
-
-If `CORS_ALLOWED_ORIGINS` is empty, no cross-origin requests are allowed.
 
 ---
 
 ## 8. Secrets Management
 
-All secrets are stored in Kubernetes Secrets, injected as environment variables at pod startup. They are never committed to source control.
-
-### Required Secrets
+All secrets stored in Kubernetes Secrets — never in source control or container images.
 
 | Secret key | Description | Generation |
 |------------|-------------|-----------|
 | `jwt-secret` | JWT signing key | `openssl rand -hex 64` |
-| `admin-username` | Admin account name | Choose your username |
-| `admin-password-hash` | Bcrypt hash of password | `python3 -c "from passlib.hash import bcrypt; print(bcrypt.hash('pw'))"` |
-| `admin-totp-secret` | TOTP secret | Generate via `/api/auth/mfa/setup` |
+| `admin-username` | Admin login | Choose username |
+| `admin-password-hash` | Bcrypt password hash | `python3 -c "from passlib.hash import bcrypt; print(bcrypt.hash('pw'))"` |
+| `admin-totp-secret` | TOTP MFA secret | `GET /api/auth/mfa/setup` |
 | `app-api-key` | Legacy API key (SSE) | `openssl rand -hex 32` |
-| `openai-api-key` | GPT-4o-mini | Anthropic/OpenAI dashboard |
+| `openai-api-key` | GPT-4o-mini | OpenAI dashboard |
 | `alpaca-api-key` | Alpaca paper | Alpaca dashboard |
 | `alpaca-secret-key` | Alpaca paper | Alpaca dashboard |
-| `cors-allowed-origins` | Allowed CORS origins | Your domain |
-| `database-url` | DB connection string | SQLite path or PostgreSQL DSN |
+| `cors-allowed-origins` | Allowed CORS origins | `https://agentictradepulse.opssightai.com` |
+| `database-url` | DB connection | `sqlite:////app/data/trading.db` |
 
-### Rotation Procedure
+### Rotation
+
 ```bash
-# 1. Update K8s secret (dry-run creates, not replaces — use apply)
 kubectl create secret generic trading-app-secrets \
   --namespace=agentic-trading-platform \
   --from-literal=jwt-secret="$(openssl rand -hex 64)" \
-  --from-literal=admin-password-hash="$(python3 -c 'from passlib.hash import bcrypt; print(bcrypt.hash("newpassword"))')" \
-  # ... other secrets unchanged ...
+  --from-literal=app-api-key="$(openssl rand -hex 32)" \
+  # ... all other secrets ...
   --dry-run=client -o yaml | kubectl apply -f -
 
-# 2. Restart pod to pick up new secrets
 kubectl rollout restart deployment/agentic-trading-backend \
   -n agentic-trading-platform
-
-# 3. All previously issued JWTs are now invalid (new JWT_SECRET)
-#    Users must log in again
+# Note: all active JWTs are invalidated when jwt-secret rotates — users must log in again
 ```
 
 ---
 
-## 9. Recommended Production Hardening (Remaining Gaps)
+## 9. Remaining Gaps & Remediation
 
-### Encryption at Rest
+### Encryption at Rest — upgrade to RDS
 ```bash
-# Migrate from SQLite to encrypted PostgreSQL RDS:
 aws rds create-db-instance \
   --db-instance-identifier retirement-advisor-db \
   --db-instance-class db.t3.micro \
   --engine postgres \
-  --storage-encrypted \          # AES-256 encryption at rest
+  --storage-encrypted \
   --master-username admin \
   --master-user-password "<strong-password>" \
   --backup-retention-period 7 \
@@ -341,34 +358,25 @@ aws rds create-db-instance \
 
 ### AWS WAF
 ```bash
-# Create a WAF Web ACL with AWS Managed Rules
-aws wafv2 create-web-acl \
-  --name retirement-advisor-waf \
-  --scope REGIONAL \
-  --default-action Allow={} \
-  --rules file://waf-rules.json \
-  --visibility-config ...
-
-# Attach ARN to k8s-deploy.yaml:
+# Attach WAF ACL to ALB — uncomment in k8s-deploy.yaml:
 # alb.ingress.kubernetes.io/wafv2-acl-arn: "<waf-acl-arn>"
 ```
 
-### VPC Private Subnets
-Move EKS nodes to private subnets with NAT gateway — only the ALB should be public-facing.
+### Redis for Token Revocation
+Replace the in-process `_REVOKED_TOKENS` set with ElastiCache Redis so revoked tokens
+persist across pod restarts and multiple replicas.
 
-### AWS Secrets Manager (Automated Rotation)
-Replace K8s secrets with AWS Secrets Manager references using the EKS Secrets Store CSI driver for automatic rotation without pod restarts.
+### VPC Private Subnets
+Move EKS nodes to private subnets with NAT gateway — only ALB should be public-facing.
 
 ### CloudWatch Alarms
 ```bash
 # Alert on 5+ failed logins in 5 minutes
 aws cloudwatch put-metric-alarm \
   --alarm-name "BruteForceAttempt" \
-  --metric-name "LOGIN_FAILED" \
   --namespace "RetirementAdvisor/Security" \
-  --period 300 --threshold 5 --comparison-operator GreaterThanThreshold \
+  --metric-name "LOGIN_FAILED" \
+  --period 300 --threshold 5 \
+  --comparison-operator GreaterThanThreshold \
   --alarm-actions "<SNS_TOPIC_ARN>"
 ```
-
-### Redis for Token Revocation
-Replace the in-process `_REVOKED_TOKENS` set (lost on pod restart) with a Redis ElastiCache instance so revoked tokens remain invalid across pod restarts and multiple replicas.

@@ -1,3 +1,30 @@
+## v3.1.0 — SOC 2 Security + Domain + TLS (2026-02-27)
+
+### Security
+- JWT authentication replacing static API key (access 15 min, refresh 7 days)
+- TOTP MFA per RFC 6238 — Google Authenticator / Authy compatible
+- Per-IP rate limiting via slowapi (auth 5/min, read 60/min, write 10/min)
+- Security response headers: HSTS, CSP, X-Frame-Options, Referrer-Policy
+- Structured JSON security audit log → stdout → CloudWatch Logs
+- CORS locked to `https://agentictradepulse.opssightai.com`
+- 6 new auth endpoints: `/api/auth/login`, `/mfa/verify`, `/refresh`, `/logout`, `/mfa/setup`, `/me`
+
+### Infrastructure
+- Domain: `agentictradepulse.opssightai.com`
+- ACM wildcard certificate `*.opssightai.com` (covers all subdomains)
+- ALB TLS: HTTP → HTTPS redirect, TLS 1.3, `ELBSecurityPolicy-TLS13-1-2-2021-06`
+- CI/CD auto-resolves ACM cert ARN by domain — no manual ARN management
+- ACM cert lookup checks primary domain, SANs, and fallback
+- Host-based ingress routing locked to `agentictradepulse.opssightai.com`
+- `drop_invalid_header_fields` enabled on ALB
+
+### Documentation
+- CLI_GUIDE.md: TLS cert commands, ALB listener cert check, updated with domain
+- DEPLOYMENT.md: wildcard cert section, DNS setup, cert renewal, full secrets table
+- SOC2_COMPLIANCE.md: complete rewrite with cert lifecycle, VALIDATION_TIMED_OUT fix, all controls
+
+---
+
 # Changelog
 
 ## v3.0.0 — Retirement Portfolio Advisor (2026-02-27)
