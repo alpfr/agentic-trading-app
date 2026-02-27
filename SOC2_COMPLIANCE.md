@@ -62,6 +62,20 @@ aws acm describe-certificate \
   --output table
 ```
 
+### ALB Listener Cert Swap
+
+If the ALB listener has the wrong cert attached (e.g. after creating a new cert while
+the ALB already exists), a redeploy alone won't fix it — the ALB controller won't
+replace the default cert. Fix it directly:
+
+```bash
+# 1. Add new cert, 2. promote to default, 3. remove old, 4. remove duplicate if any
+# See DEPLOYMENT.md → ALB Cert Swap for full commands
+```
+
+Key lesson: `add-listener-certificates` adds as non-default. Must follow with
+`modify-listener` to promote it to default before the old cert can be removed.
+
 ### If a Cert Fails Validation (`VALIDATION_TIMED_OUT`)
 
 The DNS CNAME was not added within the 72-hour window. Fix:

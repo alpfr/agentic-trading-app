@@ -213,7 +213,7 @@ kubectl rollout restart deployment/agentic-trading-backend \
 
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
-| `ERR_CERT_COMMON_NAME_INVALID` | Wrong cert attached to ALB | Check cert SANs include `*.opssightai.com`; redeploy |
+| `ERR_CERT_COMMON_NAME_INVALID` | Wrong cert attached to ALB | See **ALB Cert Swap** procedure below |
 | `VALIDATION_TIMED_OUT` on cert | DNS CNAME not added within 72h | Delete cert, request new, add CNAME immediately |
 | Rollout stuck | Pod crashing | `kubectl logs -n agentic-trading-platform deploy/agentic-trading-backend` |
 | 503 on all routes | ALB not provisioned yet | Wait 3–5 min; check `kubectl get ingress -n agentic-trading-platform` |
@@ -221,3 +221,31 @@ kubectl rollout restart deployment/agentic-trading-backend \
 | Blank watchlist | DB reset after pod restart | SQLite is ephemeral — trigger Scan All to repopulate |
 | AI returning all HOLDs | Missing `OPENAI_API_KEY` | Check K8s secret; mock client activates as fallback |
 | 401 on all endpoints | `JWT_SECRET` not set | Add `jwt-secret` to K8s secret and restart pod |
+
+---
+
+## ALB Cert Swap (manual override)
+
+Use this when the ALB listener has the wrong cert attached and a redeploy hasn't fixed it.
+This happens when the ALB was created before the new cert existed.
+
+```bash
+LISTENER="arn:aws:elasticloadbalancing:us-east-1:713220200108:listener/app/agentic-trading-alb/38a90c321f418596/7993dbda07515489"
+WILDCARD="arn:aws:acm:us-east-1:713220200108:certificate/7a263fe4-a8d5-47cc-a361-8b0a85a4c29e"
+OLD_CERT="<old-cert-arn>"
+
+# 1. Add wildcard cert to listener
+aws elbv2 add-listener-certificates   --listener-arn "$LISTENER"   --certificates "CertificateArn=$WILDCARD"   --region us-east-1
+
+# 2. Promote wildcard to default (this also demotes the old cert)
+aws elbv2 modify-listener   --listener-arn "$LISTENER"   --certificates "CertificateArn=$WILDCARD"   --region us-east-1
+
+# 3. Remove the old cert (now non-default, so removable)
+aws elbv2 remove-listener-certificates   --listener-arn "$LISTENER"   --certificates "CertificateArn=$OLD_CERT"   --region us-east-1
+
+# 4. Remove duplicate if the same ARN appears twice
+aws elbv2 remove-listener-certificates   --listener-arn "$LISTENER"   --certificates "CertificateArn=$WILDCARD"   --region us-east-1
+
+# 5. Verify — should show exactly one row, IsDefault: True
+aws elbv2 describe-listener-certificates   --listener-arn "$LISTENER"   --region us-east-1 --output table
+```

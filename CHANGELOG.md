@@ -1,3 +1,15 @@
+## v3.1.1 — TLS fully live (2026-02-27)
+
+### Fixes
+- ALB listener had old failed cert (`a5d4f053`) as default despite new wildcard being deployed
+- Root cause: ALB was created before wildcard cert existed; ingress controller attached old ARN
+- Fix: manual `modify-listener` to promote `*.opssightai.com` wildcard (`7a263fe4`) as default,
+  then removed old cert and duplicate entry
+- `https://agentictradepulse.opssightai.com` now serving valid TLS — green padlock confirmed
+- Added ALB Cert Swap runbook to DEPLOYMENT.md for future reference
+
+---
+
 ## v3.1.0 — SOC 2 Security + Domain + TLS (2026-02-27)
 
 ### Security

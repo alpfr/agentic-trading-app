@@ -48,7 +48,7 @@ webencodings==0.5.1
 websockets==16.0
 yfinance==1.2.0
 
-python-jose[cryptography]
-pyotp
-passlib[bcrypt]
-slowapi
+python-jose[cryptography]==3.5.0
+pyotp==2.9.0
+passlib[bcrypt]==1.7.4
+slowapi==0.1.9
