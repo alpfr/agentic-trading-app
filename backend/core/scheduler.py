@@ -1,95 +1,104 @@
 """
 Retirement Portfolio Scheduler
 ================================
-Replaces intraday day-trading scheduler.
-
-Schedule:
-  - Daily scan (9:35 AM ET): Run agent loop for each watchlist ticker
-  - Weekly rebalance check (Monday 10:00 AM ET): Compute drift, fire alerts
-  - Tickers staggered by 30s (yfinance courtesy)
-
-No EOD close — positions are held long-term.
+Replaces intraday 20-minute scan scheduler.
+- Daily scan: runs once per trading day at market open + 30 min (09:30 ET)
+- Weekly rebalance check: every Monday
+- No EOD close logic
 """
-
 import asyncio
 import logging
-from datetime import datetime, time
+from datetime import datetime, time as dt_time
+from typing import Callable, Awaitable
 from zoneinfo import ZoneInfo
+
+from core.watchlist import get_config
 
 logger = logging.getLogger("RetirementScheduler")
 
 ET = ZoneInfo("America/New_York")
 
-# Trigger times (ET)
-DAILY_SCAN_TIME   = time(9, 35)    # After open — one scan per day per ticker
-WEEKLY_REBAL_TIME = time(10, 0)    # Monday rebalance check
-SCAN_WINDOW_END   = time(16, 0)    # Don't fire new scans after close
+MARKET_OPEN  = dt_time(9, 30)
+SCAN_TIME    = dt_time(10, 0)   # 30 min after open — let pre-market settle
+MARKET_CLOSE = dt_time(16, 0)
 
 
-class MarketScheduler:
-    def __init__(self, run_agent_fn, close_all_positions_fn, get_config_fn,
-                 rebalance_fn=None):
-        self.run_agent    = run_agent_fn
-        self.close_all    = close_all_positions_fn   # Not used for retirement
-        self.get_config   = get_config_fn
-        self.rebalance    = rebalance_fn             # Optional weekly rebalance check
-        self._running     = True
-        self._last_daily_scan: dict  = {}   # ticker → date of last scan
-        self._last_rebal_check: str  = ""   # date string of last rebalance check
+def _is_trading_day(now: datetime) -> bool:
+    """Mon–Fri, not a weekend."""
+    return now.weekday() < 5
 
-    def stop(self):
-        self._running = False
+
+def _is_scan_window(now: datetime) -> bool:
+    """True during 10:00–10:15 ET — daily scan window."""
+    t = now.time()
+    return dt_time(10, 0) <= t <= dt_time(10, 15)
+
+
+def _is_rebalance_day(now: datetime) -> bool:
+    """True on Monday (weekday 0)."""
+    return now.weekday() == 0
+
+
+class RetirementScheduler:
+    """
+    Fires daily agent scans and weekly rebalance checks.
+    """
+
+    def __init__(
+        self,
+        run_agent_fn:            Callable[[str], Awaitable[None]],
+        run_rebalance_fn:        Callable[[], Awaitable[None]],
+        get_config_fn:           Callable  = get_config,
+    ):
+        self._run_agent    = run_agent_fn
+        self._run_rebalance = run_rebalance_fn
+        self._get_config   = get_config_fn
+        self._running      = True
+        self._last_scan_date   = None   # Track date so we scan once per day
+        self._last_rebalance_date = None
 
     async def run(self):
-        logger.info("Retirement scheduler started — waiting 90s for pod to stabilize")
+        logger.info("Retirement scheduler started — waiting 90s before first scan")
         await asyncio.sleep(90)
         while self._running:
             try:
                 await self._tick()
             except Exception as e:
                 logger.error(f"Scheduler tick error: {e}")
-            await asyncio.sleep(60)
+            await asyncio.sleep(60)   # Check every 60 seconds
 
     async def _tick(self):
-        now_et  = datetime.now(ET)
-        today   = now_et.date().isoformat()
-        now_t   = now_et.time()
-        weekday = now_et.weekday()   # 0=Mon, 6=Sun
+        now = datetime.now(ET)
 
-        # Skip weekends
-        if weekday >= 5:
+        if not _is_trading_day(now):
             return
 
-        config = self.get_config()
+        today = now.date()
 
-        # ── Weekly rebalance check (Monday morning) ──────────────────────────
-        if (weekday == 0
-                and now_t >= WEEKLY_REBAL_TIME
-                and self._last_rebal_check != today
-                and self.rebalance):
+        # ── Daily scan: once per day during 10:00–10:15 ET ──────────────
+        if _is_scan_window(now) and self._last_scan_date != today:
+            self._last_scan_date = today
+            cfg = self._get_config()
+            logger.info(f"Daily scan triggered for {len(cfg.watchlist)} tickers")
+
+            for i, ticker in enumerate(cfg.watchlist):
+                await asyncio.sleep(i * 3)   # Stagger 3s between tickers
+                asyncio.create_task(self._safe_run_agent(ticker))
+
+        # ── Weekly rebalance: Monday, first run of the week ───────────────
+        if _is_rebalance_day(now) and _is_scan_window(now) and self._last_rebalance_date != today:
+            self._last_rebalance_date = today
             logger.info("Weekly rebalance check triggered")
-            try:
-                await self.rebalance()
-                self._last_rebal_check = today
-            except Exception as e:
-                logger.error(f"Rebalance check failed: {e}")
+            asyncio.create_task(self._safe_run_rebalance())
 
-        # ── Daily scan — one per ticker per day ──────────────────────────────
-        if not (DAILY_SCAN_TIME <= now_t <= SCAN_WINDOW_END):
-            return
+    async def _safe_run_agent(self, ticker: str):
+        try:
+            await self._run_agent(ticker)
+        except Exception as e:
+            logger.error(f"Agent run failed [{ticker}]: {e}")
 
-        if config.style == "monitor_only":
-            return
-
-        for ticker in config.watchlist:
-            if self._last_daily_scan.get(ticker) == today:
-                continue   # Already scanned today
-
-            logger.info(f"Daily scan: {ticker}")
-            try:
-                asyncio.create_task(self.run_agent(ticker))
-                self._last_daily_scan[ticker] = today
-            except Exception as e:
-                logger.error(f"Failed to launch agent for {ticker}: {e}")
-
-            await asyncio.sleep(30)   # 30s between tickers — generous for yfinance
+    async def _safe_run_rebalance(self):
+        try:
+            await self._run_rebalance()
+        except Exception as e:
+            logger.error(f"Rebalance check failed: {e}")

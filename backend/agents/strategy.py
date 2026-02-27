@@ -5,7 +5,7 @@ from typing import Dict, Any
 
 from pydantic import ValidationError
 from trading_interface.events.schemas import SignalCreated
-from agents.prompts import DAY_TRADING_SYSTEM_PROMPT, USER_CONTEXT_PROMPT_TEMPLATE
+from agents.prompts import RETIREMENT_ADVISOR_SYSTEM_PROMPT, USER_CONTEXT_PROMPT_TEMPLATE
 
 logger = logging.getLogger("StrategyAgent")
 
@@ -17,36 +17,32 @@ class AbstractLLMClient:
         pass
 
 class MockSwingLLMClient(AbstractLLMClient):
-    """Simulates deterministic LLM responses for the demo architecture."""
+    """Simulates retirement advisor LLM responses (used when no OpenAI key is set)."""
     async def generate_json(self, system_prompt: str, user_prompt: str) -> str:
-        # Simulate network latency of AI inference
-        import asyncio; await asyncio.sleep(1.0)
-        
-        # Hardcoding logic to emulate AI pattern recognition
+        import asyncio; await asyncio.sleep(0.5)
+
         if "MISSING" in user_prompt or "Insufficient" in user_prompt:
             return json.dumps({
                 "suggested_action": "HOLD",
-                "suggested_horizon": "intraday",
-                "strategy_alias": "day_momentum",
-                "confidence": 0.1,
-                "rationale": "Critical fundamental or sentiment parameters missing. Opting for strict safety default."
+                "suggested_horizon": "long_term",
+                "strategy_alias": "retirement_conservative",
+                "confidence": 0.10,
+                "rationale": "Critical fundamental data is missing. A long-term retirement position should never be initiated without complete fundamental data. The primary risk is making a capital allocation decision with incomplete information."
             })
-        elif "bullish cross" in user_prompt.lower() and "positive narrative" in user_prompt.lower():
+        elif "ETF" in user_prompt.upper() or "VTI" in user_prompt or "SCHD" in user_prompt:
             return json.dumps({
                 "suggested_action": "BUY",
-                "suggested_horizon": "intraday",
-                "strategy_alias": "day_momentum",
-                "confidence": 0.82,
-                "rationale": "Strong 20SMA support confirmed alongside robust news-driven positive momentum. Fundamental PE ratios indicate fair market valuation over 5-20 day window."
+                "suggested_horizon": "long_term",
+                "strategy_alias": "retirement_etf_dca",
+                "confidence": 0.78,
+                "rationale": "Broad-market ETF with low expense ratio provides core diversification appropriate for retirement horizon. The primary risk is short-term market volatility, which is acceptable given the 5-10 year time horizon."
             })
-        
-        # The default fallback logic
         return json.dumps({
             "suggested_action": "HOLD",
-            "suggested_horizon": "intraday",
-            "strategy_alias": "day_momentum",
+            "suggested_horizon": "long_term",
+            "strategy_alias": "retirement_monitor",
             "confidence": 0.50,
-            "rationale": "Mixed technical structures with volatile baseline fundamentals. Reward to risk parameters insufficiently robust for capital commitment."
+            "rationale": "Insufficient data alignment to initiate a high-conviction long-term position. Monitor for improving fundamental signals before committing capital. The primary risk is opportunity cost if the business accelerates unexpectedly."
         })
 
 class OpenAILLMClient(AbstractLLMClient):
@@ -85,17 +81,20 @@ class StrategyAgent:
         """
         logger.info(f"Synthesizing Context for {ticker}...")
         
+        from core.watchlist import get_ticker_category
+        category = get_ticker_category(ticker)
         user_prompt = USER_CONTEXT_PROMPT_TEMPLATE.format(
             ticker=ticker,
+            category=category,
             technical_data=technicals,
             sentiment_data=sentiment,
-            fundamental_data=fundamentals
+            fundamental_data=fundamentals,
         )
 
         try:
             # Native JSON enforcement at the API level
             raw_response = await self.llm.generate_json(
-                system_prompt=DAY_TRADING_SYSTEM_PROMPT,
+                system_prompt=RETIREMENT_ADVISOR_SYSTEM_PROMPT,
                 user_prompt=user_prompt
             )
             
@@ -132,7 +131,7 @@ class StrategyAgent:
             event_id=uuid.uuid4(),
             ticker=ticker,
             suggested_action="HOLD",
-            suggested_horizon="intraday",
+            suggested_horizon="long_term",
             strategy_alias="emergency_safety",
             confidence=0.0,
             rationale=reason

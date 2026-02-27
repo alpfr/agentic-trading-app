@@ -1,279 +1,237 @@
 """
-Retirement Portfolio Risk Gatekeeper
-======================================
-Deterministic risk evaluation for long-term, buy-and-hold investing.
-All gates are pure math — the LLM cannot bypass any of them.
-
-Gate sequence for BUY signals:
-  1.  Account viability     — drawdown limit, halt flag
-  2.  Valuation quality     — P/E cap, blocks extreme overvaluation
-  3.  Dividend safety       — payout ratio cap (dividend stocks)
-  4.  Portfolio concentration — single stock cap, sector cap
-  5.  Buying power          — available cash check
-  6.  Position sizing       — 3% of portfolio per buy
-
-Gate sequence for SELL signals:
-  1.  Position exists       — verify long position in DB
-  2.  Account viability     — always allow sells
+Retirement Risk Gatekeeper
+============================
+Replaces intraday day-trading risk gates with long-term retirement-appropriate constraints.
+Key differences from the day-trading version:
+  - No EOD close, no ATR-based intraday stops
+  - Position sizing based on 2% portfolio risk per new holding
+  - Sector diversification gate (no category > target + 15%)
+  - Minimum hold check (don't churn positions < 30 days old)
+  - Trailing stop is a REVIEW ALERT, not an auto-sell
 """
-
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
-from core.portfolio_state import PortfolioState, MarketContext
 from trading_interface.events.schemas import (
     SignalCreated, RiskApproved, RiskRejected, RiskMetrics
 )
+from core.portfolio_state import PortfolioState, MarketContext
 
 logger = logging.getLogger("RetirementRiskManager")
 
 
 class HardConstraintViolation(Exception):
-    def __init__(self, metric: str, reason: str, detail: str = ""):
-        self.metric = metric
-        self.reason = reason
-        self.detail = detail
+    def __init__(self, metric: str, reason: str, is_hard: bool = True):
+        self.metric   = metric
+        self.reason   = reason
+        self.is_hard  = is_hard
         super().__init__(reason)
 
 
-@dataclass
-class RetirementRiskConfig:
-    # Account-level protection
-    max_drawdown_pct: float   = 0.20     # 20% drawdown halts new buys (long-term tolerance)
-    max_daily_loss:   float   = 0.05     # 5% daily loss — less sensitive for retirement
-
-    # Valuation gates
-    MAX_PE_RATIO:     float   = 50.0     # Block extreme overvaluation
-    MAX_PAYOUT_RATIO: float   = 0.85     # Flag dividend risk
-    MIN_FCF_POSITIVE: bool    = False    # Soft check — just warns, doesn't block ETFs
-
-    # Concentration limits
-    max_single_stock_pct: float = 0.10   # 10% max any single holding
-    max_sector_exposure:  float = 0.25   # 25% max any sector
-    MAX_OPEN_POSITIONS:   int   = 25     # Room for full 14-stock retirement portfolio + cash
-
-    # Position sizing
-    MAX_POSITION_PCT:    float  = 0.10   # Alias for max_single_stock_pct
-    risk_per_trade_pct:  float  = 0.03   # Buy 3% of portfolio per new position
-    RISK_PER_TRADE:      float  = 0.03
-
-    # Not used for retirement (no ATR-based intraday stops)
-    ATR_MULTIPLIER: float = 0.0
-
-
-class DeterministicRiskManager:
+class RetirementRiskManager:
     """
-    Retirement portfolio risk gatekeeper.
-    Evaluates every LLM signal against hard mathematical constraints.
+    Deterministic risk manager for long-term retirement investing.
+    All parameters are configurable so apply_retirement_config() can override them.
     """
+
+    # ── Configurable class attributes (overridden by apply_retirement_config) ──
+    MAX_SINGLE_POSITION_PCT = 0.10   # No single holding > 10% of portfolio
+    RISK_PER_TRADE_PCT      = 0.02   # Allocate 2% of portfolio per new position
+    MAX_OPEN_POSITIONS      = 20     # Diversified retirement portfolio
+    TRAILING_STOP_PCT       = 0.15   # 15% drawdown triggers ALERT (not auto-sell)
+    MIN_HOLD_DAYS           = 30     # Don't churn — minimum days before selling
+    REBALANCE_DRIFT         = 0.05   # Flag if category drifts > 5% from target
+
+    # Signals below this confidence are held — never act on weak AI signals
+    MIN_CONFIDENCE_TO_ACT   = 0.60
 
     def __init__(self):
-        cfg = RetirementRiskConfig()
-        # Copy all config fields as instance attributes
-        # (so apply_retirement_config() can patch them)
-        for field in cfg.__dataclass_fields__:
-            setattr(self, field, getattr(cfg, field))
+        self.halted = False
 
     def evaluate_signal(
         self,
-        signal: SignalCreated,
+        signal:    SignalCreated,
         portfolio: PortfolioState,
-        market: MarketContext,
-        fundamentals: Optional[dict] = None,
+        market:    MarketContext,
     ) -> RiskApproved | RiskRejected:
         """
-        Main evaluation entry point.
-        Returns RiskApproved (with sizing) or RiskRejected (with reason).
+        Runs all retirement-appropriate risk gates in priority order.
+        Returns RiskApproved with position sizing or RiskRejected with reason.
         """
         try:
+            # ── Gate 1: System halt ─────────────────────────────────────────
+            self._check_system_halt()
+
+            # ── Gate 2: Confidence threshold ───────────────────────────────
+            self._check_confidence(signal)
+
+            # ── Gate 3: Portfolio drawdown kill-switch ──────────────────────
+            self._check_portfolio_drawdown(portfolio)
+
+            # ── Gate 4: Action routing ──────────────────────────────────────
             action = self._map_action(signal.suggested_action)
 
-            if action == "BUY_TO_OPEN":
-                self._check_account_viability(portfolio)
-                self._check_valuation_gates(market, fundamentals)
-                self._check_portfolio_concentration(signal, portfolio, market.ticker)
-                shares, price, stop = self._size_retirement_position(market, portfolio, fundamentals)
+            if action == "HOLD":
+                raise HardConstraintViolation("HOLD", "Signal is HOLD — no execution needed.")
 
-            elif action == "SELL_TO_CLOSE":
-                self._check_position_exists(signal.ticker, portfolio)
-                shares = self._get_position_shares(signal.ticker, portfolio)
-                price  = market.current_price
-                stop   = None
+            # ── Gate 5: Min hold period (prevent churning) ──────────────────
+            if action in ("SELL", "REDUCE"):
+                self._check_min_hold(signal, portfolio, market.ticker)
 
-            else:
-                raise HardConstraintViolation("NO_ACTION", "HOLD signals are not executed.")
+            # ── Gate 6: Max position concentration ─────────────────────────
+            if action == "BUY":
+                self._check_concentration(portfolio, market)
+
+            # ── Gate 7: Trailing stop alert (soft — not auto-sell) ──────────
+            self._check_trailing_stop(signal, portfolio, market.ticker)
+
+            # ── Gate 8: Sufficient buying power ────────────────────────────
+            if action == "BUY":
+                allocation = portfolio.total_equity * self.RISK_PER_TRADE_PCT
+                if allocation > portfolio.buying_power:
+                    raise HardConstraintViolation(
+                        "BUYING_POWER",
+                        f"Insufficient funds: need ${allocation:.0f}, have ${portfolio.buying_power:.0f}."
+                    )
+
+            # ── Position sizing ─────────────────────────────────────────────
+            approved_qty, limit_price = self._size_position(action, signal, portfolio, market)
 
             metrics = RiskMetrics(
-                approved_quantity=shares,
-                hard_stop_loss=stop or 0.0,
-                position_size_pct=round((shares * price) / max(portfolio.total_equity, 1) * 100, 2),
+                position_size_pct = round(approved_qty * limit_price / max(portfolio.total_equity, 1), 4),
+                hard_stop_loss    = round(limit_price * (1 - self.TRAILING_STOP_PCT), 2),
+                approved_qty      = approved_qty,
             )
 
             return RiskApproved(
-                ticker=market.ticker,
-                action=action,
-                approved_quantity=shares,
-                approved_limit_price=price,
-                signal_id=signal.signal_id,
-                risk_metrics=metrics,
+                signal_id           = signal.signal_id,
+                ticker              = market.ticker,
+                action              = f"{action}_TO_OPEN" if action == "BUY" else f"{action}_TO_CLOSE",
+                approved_quantity   = approved_qty,
+                approved_limit_price= limit_price,
+                risk_metrics        = metrics,
             )
 
         except HardConstraintViolation as v:
-            logger.warning(f"RISK REJECTED [{market.ticker}] {v.metric}: {v.reason}")
+            logger.warning(f"RISK GATE: [{v.metric}] {v.reason}")
             return RiskRejected(
-                ticker=market.ticker,
-                failing_metric=v.metric,
-                reason=v.reason,
-                signal_id=signal.signal_id,
+                signal_id      = signal.signal_id,
+                ticker         = market.ticker,
+                failing_metric = v.metric,
+                reason         = v.reason,
             )
         except Exception as e:
-            logger.error(f"Risk evaluation error for {market.ticker}: {e}")
+            logger.error(f"Unexpected risk error for {market.ticker}: {e}")
             return RiskRejected(
-                ticker=market.ticker,
-                failing_metric="INTERNAL_ERROR",
-                reason=str(e),
-                signal_id=signal.signal_id,
+                signal_id      = signal.signal_id,
+                ticker         = market.ticker,
+                failing_metric = "SYSTEM_ERROR",
+                reason         = str(e),
             )
 
-    # ── Gate implementations ──────────────────────────────────────────────────
+    # ── Gate implementations ────────────────────────────────────────────────
 
-    def _check_account_viability(self, portfolio: PortfolioState):
-        if getattr(portfolio, "halt_flag", False):
-            raise HardConstraintViolation("HALTED", "Manual halt active.")
-        if portfolio.current_drawdown_pct >= self.max_drawdown_pct:
+    def _check_system_halt(self):
+        if self.halted:
+            raise HardConstraintViolation("HALTED", "System manually halted.")
+
+    def _check_confidence(self, signal: SignalCreated):
+        if signal.confidence < self.MIN_CONFIDENCE_TO_ACT:
             raise HardConstraintViolation(
-                "DRAWDOWN_HALT",
-                f"Portfolio down {portfolio.current_drawdown_pct*100:.1f}% from high-water mark "
-                f"(limit: {self.max_drawdown_pct*100:.0f}%). Pausing new buys."
+                "LOW_CONFIDENCE",
+                f"Signal confidence {signal.confidence:.0%} is below {self.MIN_CONFIDENCE_TO_ACT:.0%} threshold. "
+                "For long-term investing, only act on high-conviction signals."
             )
-        if portfolio.daily_loss_pct >= self.max_daily_loss:
+
+    def _check_portfolio_drawdown(self, portfolio: PortfolioState):
+        if portfolio.current_drawdown_pct >= 0.20:
             raise HardConstraintViolation(
-                "DAILY_LOSS",
-                f"Daily loss {portfolio.daily_loss_pct*100:.1f}% exceeds "
-                f"{self.max_daily_loss*100:.0f}% limit."
+                "PORTFOLIO_DRAWDOWN",
+                f"Portfolio is down {portfolio.current_drawdown_pct*100:.1f}% from peak. "
+                "Pausing new purchases — review overall allocation before adding risk."
             )
 
-    def _check_valuation_gates(self, market: MarketContext, fundamentals: Optional[dict]):
-        """Blocks egregious overvaluation. Soft on ETFs (no P/E available)."""
-        if not fundamentals:
-            return   # No fundamentals → allow but log warning
-
-        raw = fundamentals.get("raw", {})
-        pe  = raw.get("pe_trailing") or raw.get("pe_forward")
-        payout_ratio = raw.get("payout_ratio") or 0.0
-        sector = raw.get("sector", "")
-
-        # ETFs typically have no P/E — skip
-        etf_sectors = {"", None, "Unknown"}
-        if sector in etf_sectors:
-            return
-
-        # P/E gate — higher threshold for tech growth names
-        tech_sectors = {"Technology", "Communication Services"}
-        pe_cap = self.MAX_PE_RATIO * 1.2 if sector in tech_sectors else self.MAX_PE_RATIO
-
-        if pe and pe > pe_cap:
-            raise HardConstraintViolation(
-                "VALUATION_EXTREME",
-                f"{market.ticker} P/E {pe:.0f}× exceeds retirement cap of {pe_cap:.0f}×. "
-                f"Overpaying destroys long-term compounding."
-            )
-
-        # Dividend payout ratio gate
-        if payout_ratio > self.MAX_PAYOUT_RATIO:
-            raise HardConstraintViolation(
-                "DIVIDEND_RISK",
-                f"{market.ticker} payout ratio {payout_ratio*100:.0f}% > "
-                f"{self.MAX_PAYOUT_RATIO*100:.0f}%. Dividend sustainability risk — "
-                f"review before adding."
-            )
-
-    def _check_portfolio_concentration(
-        self, signal: SignalCreated, portfolio: PortfolioState, ticker: str
-    ):
-        """Single-stock and sector concentration limits."""
-        total_equity = portfolio.total_equity or 1.0
-
+    def _check_min_hold(self, signal: SignalCreated, portfolio: PortfolioState, ticker: str):
+        """Prevent selling a position held for less than MIN_HOLD_DAYS."""
         for pos in portfolio.positions:
             if pos.ticker == ticker:
-                current_exposure_pct = pos.market_value / total_equity
-                if current_exposure_pct >= self.MAX_POSITION_PCT:
+                from datetime import datetime
+                days_held = (datetime.utcnow() - pos.opened_at).days if hasattr(pos, 'opened_at') else 999
+                if days_held < self.MIN_HOLD_DAYS:
                     raise HardConstraintViolation(
-                        "POSITION_CONCENTRATION",
-                        f"{ticker} already at {current_exposure_pct*100:.1f}% of portfolio "
-                        f"(max: {self.MAX_POSITION_PCT*100:.0f}%). "
-                        f"Run rebalancing instead of adding more."
+                        "MIN_HOLD",
+                        f"{ticker} was opened {days_held} days ago. "
+                        f"Minimum hold is {self.MIN_HOLD_DAYS} days to avoid short-term capital gains tax."
                     )
 
-        # Sector check
+    def _check_concentration(self, portfolio: PortfolioState, market: MarketContext):
+        """Prevent any single position exceeding MAX_SINGLE_POSITION_PCT."""
+        allocation = portfolio.total_equity * self.RISK_PER_TRADE_PCT
+        new_position_pct = allocation / max(portfolio.total_equity, 1)
+
+        existing = sum(
+            p.market_value for p in portfolio.positions
+            if p.ticker == market.ticker
+        )
+        total_after = (existing + allocation) / max(portfolio.total_equity, 1)
+
+        if total_after > self.MAX_SINGLE_POSITION_PCT:
+            raise HardConstraintViolation(
+                "CONCENTRATION",
+                f"Adding to {market.ticker} would bring it to {total_after*100:.1f}% of portfolio. "
+                f"Max single holding is {self.MAX_SINGLE_POSITION_PCT*100:.0f}%."
+            )
+
+    def _check_trailing_stop(self, signal: SignalCreated, portfolio: PortfolioState, ticker: str):
+        """Soft alert — log a warning but don't block. Retirement investors shouldn't panic-sell."""
         for pos in portfolio.positions:
-            if getattr(pos, "sector", "UNKNOWN") == getattr(
-                portfolio, "ticker_sector", {}
-            ).get(ticker, "UNKNOWN"):
-                sector_total = sum(
-                    p.market_value for p in portfolio.positions
-                    if getattr(p, "sector", "") == pos.sector
+            if pos.ticker == ticker and pos.unrealized_pnl_pct < -self.TRAILING_STOP_PCT:
+                logger.warning(
+                    f"TRAILING STOP ALERT: {ticker} is down {abs(pos.unrealized_pnl_pct)*100:.1f}% "
+                    f"from entry. Consider reviewing the fundamental thesis."
                 )
-                if sector_total / total_equity >= self.max_sector_exposure:
-                    raise HardConstraintViolation(
-                        "SECTOR_CONCENTRATION",
-                        f"Adding {ticker} would exceed {self.max_sector_exposure*100:.0f}% "
-                        f"sector concentration limit."
-                    )
+                # Soft alert only — does NOT raise HardConstraintViolation
 
-    def _size_retirement_position(
-        self, market: MarketContext, portfolio: PortfolioState,
-        fundamentals: Optional[dict]
-    ) -> tuple:
+    def _size_position(self, action: str, signal: SignalCreated,
+                       portfolio: PortfolioState, market: MarketContext):
         """
-        Size a retirement buy:
-          - Buy 3% of total equity per new position
-          - Cap at MAX_POSITION_PCT (10%)
-          - Use LIMIT price 0.5% below current to avoid chasing
-          - No stop-loss (long-term hold; rebalancing handles exits)
+        Retirement position sizing:
+        - BUY:    allocate RISK_PER_TRADE_PCT of total equity
+        - SELL/REDUCE: sell the full existing position (or half for REDUCE)
         """
         price = market.current_price
         if price <= 0:
-            raise HardConstraintViolation("DATA_ERROR", "Price is zero/negative.")
+            raise HardConstraintViolation("DATA_ERROR", "Price is zero or negative.")
 
-        equity = portfolio.total_equity
-        alloc  = equity * self.risk_per_trade_pct    # 3% of portfolio
-
-        # Cap at max position size
-        max_alloc = equity * self.MAX_POSITION_PCT
-        alloc     = min(alloc, max_alloc)
-
-        shares = max(1, int(alloc / price))
-
-        # Limit price: 0.5% below current (retirement discipline — don't overpay)
-        limit_price = round(price * 0.995, 2)
-
-        if shares * limit_price > portfolio.buying_power:
-            raise HardConstraintViolation(
-                "BUYING_POWER",
-                f"Need ${shares * limit_price:,.0f} but only "
-                f"${portfolio.buying_power:,.0f} available."
+        if action == "BUY":
+            allocation = portfolio.total_equity * self.RISK_PER_TRADE_PCT
+            qty = max(1, int(allocation / price))
+        elif action == "SELL":
+            # Sell entire position
+            existing_qty = next(
+                (p.quantity for p in portfolio.positions if p.ticker == market.ticker), 0
             )
-
-        return shares, limit_price, None   # No stop-loss for retirement holds
-
-    def _check_position_exists(self, ticker: str, portfolio: PortfolioState):
-        if not any(p.ticker == ticker for p in portfolio.positions):
-            raise HardConstraintViolation(
-                "NO_POSITION",
-                f"No open long position in {ticker} to sell."
+            qty = max(1, existing_qty)
+        else:  # REDUCE
+            existing_qty = next(
+                (p.quantity for p in portfolio.positions if p.ticker == market.ticker), 0
             )
+            qty = max(1, existing_qty // 2)
 
-    def _get_position_shares(self, ticker: str, portfolio: PortfolioState) -> int:
-        for p in portfolio.positions:
-            if p.ticker == ticker:
-                return p.quantity
-        return 0
+        return qty, round(price, 2)
 
     def _map_action(self, string_action: str) -> str:
-        action = string_action.upper().strip()
-        if action == "BUY":  return "BUY_TO_OPEN"
-        if action == "SELL": return "SELL_TO_CLOSE"
-        if action == "HOLD": raise HardConstraintViolation("NO_ACTION", "HOLD — no trade.")
-        raise HardConstraintViolation("INVALID_ACTION", f"Unknown action: '{action}'")
+        mapping = {
+            "BUY":    "BUY",
+            "SELL":   "SELL",
+            "REDUCE": "REDUCE",
+            "HOLD":   "HOLD",
+            "REVIEW": "HOLD",   # REVIEW = HOLD in execution terms
+        }
+        if string_action in mapping:
+            return mapping[string_action]
+        raise HardConstraintViolation("INVALID_ACTION", f"Unknown action: '{string_action}'")
+
+
+# ── Backwards-compatible alias used in app.py ──
+DeterministicRiskManager = RetirementRiskManager

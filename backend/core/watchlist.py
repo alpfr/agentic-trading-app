@@ -1,94 +1,80 @@
 """
 Retirement Portfolio Configuration
 ====================================
-Watchlist split across three buckets with target allocations:
-  40%  Core ETFs      — broad market / dividend index
-  30%  Dividend       — high-quality income compounders
-  30%  Growth         — long-duration quality growth
-
-Horizon: 5-10 years to retirement
-Risk profile: Moderate — growth with capital preservation
+Replaces day-trading watchlist with a long-term retirement-focused portfolio.
+Horizon: 5-10 years. Style: buy-and-hold with periodic rebalancing.
 """
-
 from dataclasses import dataclass, field
 from typing import List, Dict
 
-# ── Default watchlist ────────────────────────────────────────────────────────
-WATCHLIST_ETF = ["VTI", "SCHD", "DGRO", "QQQ"]          # Core ETF sleeve
-WATCHLIST_DIVIDEND = ["JNJ", "KO", "PG", "ABBV", "VZ"]  # Dividend compounders
-WATCHLIST_GROWTH = ["MSFT", "AAPL", "NVDA", "GOOGL", "AMZN"]  # Quality growth
-
-DEFAULT_WATCHLIST = WATCHLIST_ETF + WATCHLIST_DIVIDEND + WATCHLIST_GROWTH
-
-# ── Target allocations (% of portfolio) ─────────────────────────────────────
-TARGET_ALLOCATIONS: Dict[str, float] = {
-    # ETF sleeve — 40%
-    "VTI":   0.15,   # Total US market anchor
-    "SCHD":  0.10,   # Dividend-weighted US
-    "DGRO":  0.08,   # Dividend growth
-    "QQQ":   0.07,   # Tech/growth tilt
-
-    # Dividend sleeve — 30%
-    "JNJ":   0.07,
-    "KO":    0.06,
-    "PG":    0.07,
-    "ABBV":  0.05,
-    "VZ":    0.05,
-
-    # Growth sleeve — 30%
-    "MSFT":  0.08,
-    "AAPL":  0.07,
-    "NVDA":  0.05,
-    "GOOGL": 0.05,
-    "AMZN":  0.05,
-}
-
-# Rebalancing trigger: drift beyond this % of target → flag for rebalancing
-REBALANCE_DRIFT_THRESHOLD = 0.05   # 5 percentage points
-
-# ── Portfolio config ─────────────────────────────────────────────────────────
 @dataclass
-class PortfolioConfig:
-    watchlist: List[str] = field(default_factory=lambda: list(DEFAULT_WATCHLIST))
-    target_allocations: Dict[str, float] = field(default_factory=lambda: dict(TARGET_ALLOCATIONS))
+class RetirementConfig:
+    # ── Watchlist ──────────────────────────────────────────────────────────
+    watchlist: List[str] = field(default_factory=lambda: [
+        # ETFs (target 40% of portfolio)
+        "VTI",   # Vanguard Total Market — broad US diversification
+        "SCHD",  # Schwab Dividend ETF — dividend growth + quality
+        "QQQ",   # Invesco Nasdaq-100 — tech/growth exposure
 
-    # Investment style
+        # Dividend stocks (target 25% of portfolio)
+        "JNJ",   # Johnson & Johnson — healthcare, 60+ yr dividend grower
+        "PG",    # Procter & Gamble — consumer staples, recession-resilient
+
+        # Growth stocks (target 35% of portfolio)
+        "MSFT",  # Microsoft — cloud dominance, diversified revenue
+        "NVDA",  # Nvidia — AI infrastructure, long-term secular trend
+        "AAPL",  # Apple — ecosystem moat, growing services revenue
+    ])
+
+    # ── Investment style ───────────────────────────────────────────────────
     style: str = "retirement"
-    risk_profile: str = "moderate"
-    horizon_years: int = 7               # Mid-point of 5-10 year range
+    horizon_years: int = 7          # Mid-point of 5-10 yr range
 
-    # Risk per buy (% of portfolio per new position)
-    position_size_pct: float = 0.03      # 3% of portfolio per buy
-    max_single_stock_pct: float = 0.10   # 10% max any single position
-    max_sector_pct: float = 0.25         # 25% max any single sector
-    min_dividend_yield: float = 0.0      # No minimum — ETFs may have low yield
+    # ── Target allocations by category (must sum to 1.0) ──────────────────
+    target_allocations: Dict[str, float] = field(default_factory=lambda: {
+        "ETF":      0.40,   # Core diversification
+        "dividend": 0.25,   # Income + stability
+        "growth":   0.35,   # Long-term appreciation
+    })
 
-    # Rebalancing
-    rebalance_drift_threshold: float = REBALANCE_DRIFT_THRESHOLD
-    rebalance_frequency: str = "quarterly"
+    # Ticker → category mapping
+    ticker_categories: Dict[str, str] = field(default_factory=lambda: {
+        "VTI": "ETF", "SCHD": "ETF", "QQQ": "ETF",
+        "JNJ": "dividend", "PG": "dividend",
+        "MSFT": "growth", "NVDA": "growth", "AAPL": "growth",
+    })
 
-    # Scan schedule
-    scan_interval_hours: int = 24        # Daily scan per ticker
-    rebalance_check_days: int = 7        # Weekly rebalance drift check
+    # ── Risk parameters ────────────────────────────────────────────────────
+    max_single_position_pct: float = 0.10   # No single stock > 10% of portfolio
+    trailing_stop_pct:       float = 0.15   # 15% drawdown triggers review alert
+    rebalance_drift_trigger: float = 0.05   # Rebalance when allocation drifts > 5%
+    min_hold_days:           int   = 30     # Don't churn — minimum 30-day hold
+    risk_per_trade_pct:      float = 0.02   # 2% of portfolio per new position
 
-    # Order settings — LIMIT orders for retirement (don't chase price)
-    order_type: str = "LIMIT"
-    limit_offset_pct: float = 0.005     # Limit 0.5% below ask (avoid overpaying)
+    # ── Scan schedule ──────────────────────────────────────────────────────
+    scan_interval_hours: int = 24           # Daily scan (not intraday)
+    rebalance_check_day: str = "Monday"     # Weekly rebalance review
 
-    # No EOD close — hold positions
-    auto_close_eod: bool = False
-
-
-# ── Singleton ────────────────────────────────────────────────────────────────
-PORTFOLIO_CONFIG = PortfolioConfig()
-
-
-def get_config() -> PortfolioConfig:
-    return PORTFOLIO_CONFIG
+    # ── Paper trading ──────────────────────────────────────────────────────
+    paper_only: bool = True     # Always True until user explicitly enables live
 
 
-def update_config(**kwargs) -> PortfolioConfig:
-    for k, v in kwargs.items():
-        if hasattr(PORTFOLIO_CONFIG, k):
-            setattr(PORTFOLIO_CONFIG, k, v)
-    return PORTFOLIO_CONFIG
+# Module-level singleton
+_config = RetirementConfig()
+
+
+def get_config() -> RetirementConfig:
+    return _config
+
+
+def update_watchlist(tickers: List[str]) -> RetirementConfig:
+    _config.watchlist = [t.upper() for t in tickers]
+    return _config
+
+
+def get_ticker_category(ticker: str) -> str:
+    return _config.ticker_categories.get(ticker.upper(), "growth")
+
+
+# Convenience alias used by app.py imports
+TARGET_ALLOCATIONS = RetirementConfig().target_allocations

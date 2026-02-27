@@ -45,11 +45,13 @@ from core.database import (
 )
 from core.portfolio_state import PortfolioState, MarketContext, PositionState
 from core.risk_gatekeeper import DeterministicRiskManager
-from core.watchlist import get_config, update_config, DEFAULT_WATCHLIST, TARGET_ALLOCATIONS
-from core.scheduler import MarketScheduler
-from core.retirement_config import apply_retirement_config
+from core.watchlist import get_config, update_watchlist, TARGET_ALLOCATIONS
+from core.scheduler import RetirementScheduler
+from core.rebalance import compute_rebalance_report
+from core.alerts import check_and_generate_alerts, get_all_alerts, mark_read, get_unread_count
 from core.rebalancer import compute_rebalance, rebalance_report_to_dict
 from core.alerts import generate_portfolio_alerts
+from core.day_trading import apply_day_trading_config
 from agents.fundamental import fetch_fundamentals
 from trading_interface.reconciliation.job import SyncWorker
 from trading_interface.broker.alpaca_paper import AlpacaPaperBroker
@@ -122,10 +124,16 @@ async def startup_event():
     async def _close_all():
         pass  # Retirement: no EOD auto-close; positions are held long-term
 
-    scheduler = MarketScheduler(
-        run_agent_fn           = _run_agent,
-        close_all_positions_fn = _close_all,
-        get_config_fn          = get_config,
+    async def _run_rebalance():
+        try:
+            await _run_rebalance_check()
+        except Exception as e:
+            logger.error(f"Rebalance check error: {e}")
+
+    scheduler = RetirementScheduler(
+        run_agent_fn     = _run_agent,
+        run_rebalance_fn = _run_rebalance,
+        get_config_fn    = get_config,
     )
     asyncio.create_task(scheduler.run())
     cfg = get_config()
@@ -215,6 +223,33 @@ async def _build_portfolio_state() -> PortfolioState:
             daily_start_equity=1.0,
             positions=[],
         )
+
+
+# ---------------------------------------------------------------------------
+# Rebalance Check
+# ---------------------------------------------------------------------------
+async def _run_rebalance_check() -> None:
+    """Weekly rebalance check — computes allocation drift and logs recommendations."""
+    db = SessionLocal()
+    try:
+        open_positions = db.query(StoredPosition).filter(StoredPosition.is_open == True).all()
+        pos_list = [{"ticker": p.ticker, "market_value": p.current_price * p.shares} for p in open_positions]
+
+        try:
+            account = await BROKER_CLIENT.get_account()
+            total_equity = account.portfolio_value
+        except Exception:
+            total_equity = 100_000.0
+
+        report = compute_rebalance_report(pos_list, total_equity)
+        logger.info(f"Rebalance check: {report.summary}")
+
+        for rec in report.recommendations:
+            if rec.action != "ON_TARGET":
+                log_audit("REBALANCE", "RebalanceEngine", rec.category,
+                          rec.rationale)
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -311,22 +346,30 @@ async def run_agent_loop(ticker: str):
         log_audit("SYNCED", "MarketDataAgent", ticker, f"Price=${live_context.current_price}")
 
     # Fix #1: Refresh current_price on any open DB position for this ticker
-    # so portfolio PnL is live, not frozen at entry price
     _price_db = SessionLocal()
+    open_positions_snapshot = []
     try:
         _open = (_price_db.query(StoredPosition)
                  .filter(StoredPosition.ticker == ticker, StoredPosition.is_open == True)
                  .all())
         for _pos in _open:
             _pos.current_price = live_context.current_price
+            open_positions_snapshot.append({"ticker": _pos.ticker, "entry": _pos.entry_price})
         if _open:
             _price_db.commit()
-            logger.debug(f"Updated current_price for {len(_open)} open {ticker} position(s)")
     except Exception as _e:
         logger.warning(f"Price refresh failed for {ticker}: {_e}")
         _price_db.rollback()
     finally:
         _price_db.close()
+
+    # Generate alerts (price drop, trailing stop breach)
+    check_and_generate_alerts(
+        ticker        = ticker,
+        current_price = live_context.current_price,
+        prev_close    = getattr(live_context, 'prev_close', None),
+        positions     = open_positions_snapshot,
+    )
 
     # 2. Strategy agent
     technicals   = await MARKET_AGENT.generate_technical_summary_string(ticker, live_context)
@@ -597,7 +640,7 @@ async def set_watchlist(payload: dict):
             tickers.append(clean)
     if not tickers:
         raise HTTPException(status_code=400, detail="No valid tickers provided")
-    update_config(watchlist=tickers)
+    update_watchlist(watchlist=tickers)
     return {"watchlist": tickers, "message": f"Watchlist updated: {tickers}"}
 
 

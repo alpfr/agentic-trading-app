@@ -280,12 +280,12 @@ export default function App() {
       <main style={{ flex: 1, overflowY: 'auto', background: 'var(--bg-dark)', padding: '32px 48px' }}>
         <header className="animate-fade-in" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }}>
           <div>
-            <h2 style={{ fontSize: '28px', fontWeight: 600 }}>Portfolio Command Center</h2>
-            <p style={{ color: 'var(--text-muted)', fontSize: '14px', marginTop: '4px' }}>Deterministic risk enforcement active.</p>
+            <h2 style={{ fontSize: '28px', fontWeight: 600 }}>Retirement Portfolio</h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '14px', marginTop: '4px' }}>Retirement portfolio advisor — 5–10 year horizon · paper trading.</p>
           </div>
           <div style={{ display: 'flex', gap: '24px' }}>
             <div style={{ padding: '16px 20px', background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: '12px' }}>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, marginBottom: '8px' }}>Trigger Autonomous Agents</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, marginBottom: '8px' }}>Analyze Ticker</p>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <input type="text" value={targetTicker} onChange={(e) => setTargetTicker(e.target.value.toUpperCase().replace(/[^A-Z]/g, ''))}
                   style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: '#fff', padding: '8px 12px', borderRadius: '6px', width: '80px', fontFamily: 'monospace' }} />
@@ -314,7 +314,7 @@ export default function App() {
               <div>
                 <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 700 }}>⭐ My Watchlist</h2>
                 <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>
-                  Day trading · Conservative · 1% risk/trade · 1×ATR stop · EOD auto-close 15:45 ET
+                  Retirement portfolio · 5–10 yr horizon · daily AI scan · paper trading
                 </p>
               </div>
               <div style={{ display: 'flex', gap: '10px' }}>
@@ -322,9 +322,9 @@ export default function App() {
                   style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: watchlistScanning ? 'not-allowed' : 'pointer', opacity: watchlistScanning ? 0.7 : 1 }}>
                   <PlayCircle size={16} /> {watchlistScanning ? 'Scanning...' : 'Scan All Now'}
                 </button>
-                <button onClick={closeAllPositions}
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', background: 'var(--danger-bg)', color: 'var(--danger)', border: '1px solid var(--danger)', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}>
-                  <XCircle size={16} /> Close All
+                <button onClick={() => setActiveTab('rebalance')}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', background: 'rgba(79,70,229,0.1)', color: 'var(--primary)', border: '1px solid var(--primary)', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}>
+                  <BarChart3 size={16} /> Rebalance
                 </button>
               </div>
             </div>
@@ -361,10 +361,10 @@ export default function App() {
                     {/* Metrics row */}
                     {d && (
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px' }}>
-                        {d.volume && <div style={{ color: 'var(--text-muted)' }}>Vol: <span style={{ color: 'var(--text)' }}>{d.volume >= 1e6 ? (d.volume/1e6).toFixed(1)+'M' : d.volume >= 1e3 ? (d.volume/1e3).toFixed(0)+'K' : d.volume}</span></div>}
-                        {d.atr_14 && <div style={{ color: 'var(--text-muted)' }}>ATR: <span style={{ color: 'var(--text)' }}>${d.atr_14?.toFixed(2)}</span></div>}
-                        {d.sma_20 && <div style={{ color: 'var(--text-muted)' }}>SMA20: <span style={{ color: price > d.sma_20 ? 'var(--success)' : 'var(--danger)' }}>${d.sma_20?.toFixed(2)}</span></div>}
-                        {d.sma_50 && <div style={{ color: 'var(--text-muted)' }}>SMA50: <span style={{ color: price > d.sma_50 ? 'var(--success)' : 'var(--danger)' }}>${d.sma_50?.toFixed(2)}</span></div>}
+                          {d.volume && <div style={{ color: 'var(--text-muted)' }}>Vol: <span style={{ color: 'var(--text)' }}>{d.volume >= 1e6 ? (d.volume/1e6).toFixed(1)+'M' : d.volume >= 1e3 ? (d.volume/1e3).toFixed(0)+'K' : d.volume}</span></div>}
+                        {d.sma_20 && <div style={{ color: 'var(--text-muted)' }}>vs SMA20: <span style={{ color: price > d.sma_20 ? 'var(--success)' : 'var(--danger)' }}>{price > d.sma_20 ? '▲' : '▼'} {price && d.sma_20 ? ((price/d.sma_20 - 1)*100).toFixed(1)+'%' : '—'}</span></div>}
+                        {d.sma_50 && <div style={{ color: 'var(--text-muted)' }}>vs SMA200: <span style={{ color: price > d.sma_50 ? 'var(--success)' : 'var(--danger)' }}>{price > d.sma_50 ? '▲' : '▼'} {price && d.sma_50 ? ((price/d.sma_50 - 1)*100).toFixed(1)+'%' : '—'}</span></div>}
+                        {d.dividend_yield && <div style={{ color: 'var(--text-muted)' }}>Yield: <span style={{ color: '#fbbf24' }}>{d.dividend_yield?.toFixed(2)}%</span></div>}
                       </div>
                     )}
 
@@ -409,13 +409,13 @@ export default function App() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '12px', fontSize: '13px' }}>
                   {[
                     ['Style', tradingConfig.style],
-                    ['Risk Profile', tradingConfig.risk_profile],
+                    ['Horizon', tradingConfig.horizon_years ? tradingConfig.horizon_years + ' years' : '5-10 yr'],
                     ['Risk/Trade', tradingConfig.risk_per_trade_pct?.toFixed(1) + '%'],
-                    ['ATR Stop', tradingConfig.atr_multiplier + '×'],
-                    ['Max Position', tradingConfig.max_position_pct?.toFixed(0) + '%'],
-                    ['Max Open', tradingConfig.max_open_positions],
-                    ['Scan Interval', tradingConfig.scan_interval_minutes + ' min'],
-                    ['EOD Close', tradingConfig.eod_close_time_et + ' ET'],
+                    ['Max Position', tradingConfig.max_single_position_pct ? (tradingConfig.max_single_position_pct*100).toFixed(0) + '%' : '10%'],
+                    ['Trailing Stop', tradingConfig.trailing_stop_pct ? (tradingConfig.trailing_stop_pct*100).toFixed(0) + '%' : '15%'],
+                    ['Min Hold', tradingConfig.min_hold_days ? tradingConfig.min_hold_days + ' days' : '30 days'],
+                    ['Rebalance Drift', tradingConfig.rebalance_drift_trigger ? (tradingConfig.rebalance_drift_trigger*100).toFixed(0) + '%' : '5%'],
+                    ['Paper Only', tradingConfig.paper_only !== false ? 'Yes' : 'No'],
                   ].map(([label, val]) => (
                     <div key={label} style={{ background: 'var(--bg)', borderRadius: '8px', padding: '10px 12px' }}>
                       <div style={{ color: 'var(--text-muted)', fontSize: '11px', marginBottom: '2px' }}>{label}</div>
@@ -431,7 +431,7 @@ export default function App() {
         {activeTab === 'dashboard' && (
           <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px' }}>
             <section className="glass-panel" style={{ padding: '24px' }}>
-              <h3 style={{ fontSize: '18px', fontWeight: 500, borderBottom: '1px solid var(--border)', paddingBottom: '16px', marginBottom: '16px' }}>Active Paper Positions</h3>
+              <h3 style={{ fontSize: '18px', fontWeight: 500, borderBottom: '1px solid var(--border)', paddingBottom: '16px', marginBottom: '16px' }}>Holdings (Paper)</h3>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
                 <thead>
                   <tr style={{ color: 'var(--text-dark)', fontSize: '12px', textTransform: 'uppercase' }}>
@@ -464,15 +464,16 @@ export default function App() {
 
             <section className="glass-panel" style={{ padding: '24px' }}>
               <h3 style={{ fontSize: '18px', fontWeight: 500, borderBottom: '1px solid var(--border)', paddingBottom: '16px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Activity size={18} /> Deterministic Constraints
+                <Shield size={18} /> Risk Guardrails
               </h3>
-              <ConstraintRow label="Max Daily Loss"        value="3.0%" limit="3.0%" />
-              <ConstraintRow label="Account Exposure"      value="8.4%" limit="100.0%" />
-              <ConstraintRow label="Sector Correlation"    value="12%"  limit="20%" />
+              <ConstraintRow label="Max Single Position"   value="2%" limit="10%" />
+              <ConstraintRow label="Trailing Stop Alert"   value="–" limit="15%" />
+              <ConstraintRow label="Min Hold Period"       value="–" limit="30 days" />
+              <ConstraintRow label="Min Signal Confidence" value="–" limit="60%" />
               <div style={{ marginTop: '24px', padding: '16px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', display: 'flex', gap: '12px' }}>
                 <Info color="var(--text-muted)" size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
                 <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.5, margin: 0 }}>
-                  The Multi-Agent system cannot bypass these mathematical boundaries. Any LLM-proposed trade exceeding these configurations is instantly rejected by the Python execution layer.
+                  The AI agent cannot bypass these mathematical limits. Any recommendation that violates concentration, drawdown, or confidence thresholds is automatically blocked. Positions are never auto-closed — this is a buy-and-hold advisor.
                 </p>
               </div>
             </section>
