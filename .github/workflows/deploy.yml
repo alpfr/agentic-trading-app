@@ -123,8 +123,9 @@ jobs:
       # ── FRONTEND ─────────────────────────────────────────────
       - name: Write frontend env for production build
         run: |
+          # Leave VITE_API_BASE_URL unset so the frontend falls back to
+          # window.location.origin at runtime — ALB routes /api/* to backend.
           cat > frontend/.env.production << ENVEOF
-          VITE_API_BASE_URL=http://placeholder-replaced-after-alb
           VITE_API_KEY=${{ secrets.APP_API_KEY }}
           ENVEOF
 

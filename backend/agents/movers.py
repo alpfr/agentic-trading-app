@@ -118,13 +118,23 @@ def _compute_from_watchlist() -> dict:
             logger.error("Watchlist download returned empty DataFrame")
             return _empty_movers()
 
-        # Handle MultiIndex columns (yfinance v0.2+)
+        # Handle MultiIndex columns — yfinance may use ('Price','Ticker') or ('Ticker','Price')
         if isinstance(df.columns, pd.MultiIndex):
-            close  = df["Close"]
-            volume = df["Volume"] if "Volume" in df else None
+            level_names = df.columns.names
+            # Swap levels if Ticker is the outer level so we can index by field name
+            if level_names[0] == "Ticker":
+                df = df.swaplevel(axis=1)
+                df.columns.names = ["Price", "Ticker"]
+            close  = df["Close"] if "Close" in df.columns.get_level_values(0) else None
+            volume = df["Volume"] if "Volume" in df.columns.get_level_values(0) else None
+            if close is None:
+                logger.error("No 'Close' column found in downloaded data")
+                return _empty_movers()
         else:
-            close  = df[["Close"]]
+            close  = df[["Close"]] if "Close" in df.columns else None
             volume = df[["Volume"]] if "Volume" in df.columns else None
+            if close is None:
+                return _empty_movers()
 
         # Drop columns that are all NaN (failed tickers)
         close = close.dropna(axis=1, how="all")

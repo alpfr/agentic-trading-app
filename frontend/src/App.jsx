@@ -8,7 +8,7 @@ import './index.css';
 // Config — driven by Vite env vars so this never needs to be hardcoded.
 // Set VITE_API_BASE_URL and VITE_API_KEY in your .env / CI pipeline.
 // ---------------------------------------------------------------------------
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || window.location.origin;
 const API_KEY  = import.meta.env.VITE_API_KEY       || '';
 
 // Axios instance with auth header on every request
