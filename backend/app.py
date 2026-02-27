@@ -1013,3 +1013,20 @@ async def event_stream():
             await asyncio.sleep(2)
 
     return StreamingResponse(generator(), media_type="text/event-stream")
+
+
+# ── TEMPORARY: one-time password hash generator — REMOVE AFTER USE ─────────
+@app.get("/api/setup/hash-password", include_in_schema=False)
+async def hash_password_once(password: str):
+    """
+    ONE-TIME USE — generates a bcrypt hash for admin password setup.
+    Delete this endpoint immediately after use.
+    """
+    import os
+    # Only works if SETUP_TOKEN env var is set — prevents accidental exposure
+    setup_token = os.getenv("SETUP_TOKEN", "")
+    from fastapi import Query
+    if not setup_token:
+        raise HTTPException(status_code=404, detail="Not found")
+    from trading_interface.security import hash_password
+    return {"hash": hash_password(password)}
