@@ -306,7 +306,7 @@ jobs:
             --from-literal=admin-password-hash="${{ secrets.ADMIN_PASSWORD_HASH }}" \
             --from-literal=admin-totp-secret="${{ secrets.ADMIN_TOTP_SECRET }}" \
             --from-literal=cors-allowed-origins="${{ secrets.CORS_ALLOWED_ORIGINS || 'https://agentictradepulse.opssightai.com' }}" \
-            --from-literal=database-url="${{ secrets.DATABASE_URL }}" \
+            --from-literal=database-url="${{ secrets.DATABASE_URL || 'sqlite:////app/trading.db' }}" \
             --dry-run=client -o yaml | kubectl apply -f -
           echo "K8s secrets applied"
 
