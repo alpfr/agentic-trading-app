@@ -41,7 +41,8 @@ class MarketScheduler:
         self._running = False
 
     async def run(self):
-        logger.info("Market scheduler started")
+        logger.info("Market scheduler started — waiting 90s before first scan")
+        await asyncio.sleep(90)   # Let pod fully stabilize before first scan
         while self._running:
             try:
                 await self._tick()

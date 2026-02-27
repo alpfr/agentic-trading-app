@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import yfinance as yf
 import pandas as pd
@@ -34,6 +35,13 @@ class MarketDataAgent:
                 return cached_data
 
         logger.info(f"Fetching live yfinance data for {ticker}...")
+        # Run all blocking yfinance I/O in a thread pool — never block the event loop
+        loop = asyncio.get_event_loop()
+        ctx = await loop.run_in_executor(None, self._fetch_sync, ticker)
+        return ctx
+
+    def _fetch_sync(self, ticker: str) -> MarketContext:
+        """Synchronous inner — runs in thread pool via run_in_executor."""
         try:
             df = yf.download(ticker, period="3mo", interval="1d", progress=False)
             if df.empty:
@@ -182,6 +190,10 @@ class MarketDataAgent:
         )
 
     async def fetch_news_and_sentiment(self, ticker: str) -> str:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._fetch_news_sync, ticker)
+
+    def _fetch_news_sync(self, ticker: str) -> str:
         logger.info(f"Fetching news for {ticker}...")
         try:
             stock = yf.Ticker(ticker)
@@ -203,6 +215,10 @@ class MarketDataAgent:
             return "Error retrieving news data."
 
     async def fetch_fundamentals(self, ticker: str) -> str:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._fetch_fundamentals_sync, ticker)
+
+    def _fetch_fundamentals_sync(self, ticker: str) -> str:
         logger.info(f"Fetching fundamentals for {ticker}...")
         try:
             stock = yf.Ticker(ticker)
