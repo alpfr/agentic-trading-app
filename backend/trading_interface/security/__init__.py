@@ -10,6 +10,7 @@ Replaces the single-static-API-key model with:
   - CORS locked to CORS_ALLOWED_ORIGINS env var (no localhost default in prod)
 """
 
+from starlette.middleware.base import BaseHTTPMiddleware
 import os
 import re
 import logging
@@ -217,44 +218,25 @@ def sanitize_ticker(raw: str) -> str:
 # Security response headers middleware
 # ══════════════════════════════════════════════════════════════════════════
 
-class SecurityHeadersMiddleware:
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """
     Adds SOC 2 / OWASP-recommended security headers to every response.
-    Mount via: app.middleware("http")(SecurityHeadersMiddleware(app))
+    Mount via: app.add_middleware(SecurityHeadersMiddleware)
     """
-    def __init__(self, app):
-        self.app = app
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-
-        async def send_with_headers(message):
-            if message["type"] == "http.response.start":
-                headers = dict(message.get("headers", []))
-                # HSTS — only add if running over HTTPS (check X-Forwarded-Proto)
-                headers[b"strict-transport-security"] = b"max-age=31536000; includeSubDomains"
-                # Prevent MIME sniffing
-                headers[b"x-content-type-options"] = b"nosniff"
-                # Deny framing (clickjacking)
-                headers[b"x-frame-options"] = b"DENY"
-                # Minimal referrer leakage
-                headers[b"referrer-policy"] = b"strict-origin-when-cross-origin"
-                # Restrict browser features
-                headers[b"permissions-policy"] = b"camera=(), microphone=(), geolocation=()"
-                # Content Security Policy — tighten in prod
-                headers[b"content-security-policy"] = (
-                    b"default-src 'self'; "
-                    b"connect-src 'self'; "
-                    b"script-src 'self' 'unsafe-inline'; "
-                    b"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-                    b"font-src 'self' https://fonts.gstatic.com; "
-                    b"img-src 'self' data:; "
-                    b"frame-ancestors 'none';"
-                )
-                message = dict(message)
-                message["headers"] = list(headers.items())
-            await send(message)
-
-        await self.app(scope, receive, send_with_headers)
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["X-Content-Type-Options"]    = "nosniff"
+        response.headers["X-Frame-Options"]           = "DENY"
+        response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"]        = "camera=(), microphone=(), geolocation=()"
+        response.headers["Content-Security-Policy"]   = (
+            "default-src 'self'; "
+            "connect-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data:; "
+            "frame-ancestors 'none';"
+        )
+        return response

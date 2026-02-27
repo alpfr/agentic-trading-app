@@ -88,7 +88,7 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # Security response headers
-app.middleware('http')(SecurityHeadersMiddleware(app))
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Auth router
 app.include_router(auth_router)
