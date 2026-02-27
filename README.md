@@ -77,3 +77,13 @@ This script will:
 4. Apply `k8s-deploy.yaml` to deploy Deployments, Services, and an AWS ALB Ingress.
 
 Once deployed, the AWS Application Load Balancer will automatically provision a public DNS endpoint linking `/api` routes to your Python backend, and `/` routes to the React frontend.
+
+## Roadmap & Key Differentiators (Phase 2)
+
+To elevate this application from a standard LLM wrapper to an institutional-grade conceptual architecture, the following differentiators are mapped for Phase 2:
+
+1. **Multi-LLM Adversarial "Debate"**: Rather than generating a single signal, the Supervisor Agent simultaneously spawns a `BullAgent` (using `gpt-4o`) and a `BearAgent` (using `claude-3-5-sonnet`) to explicitly argue contrasting theses. A third "Judge Agent" determines the final confidence score, drastically reducing hallucinations.
+2. **Deep SEC EDGAR Ingestion**: Expanding the Context agent beyond standard pricing numbers to natively query and scrape 10-K/10-Q PDF/text filings directly from the SEC, teaching the LLM to identify narrative risks like "pending litigation" or hidden debt structures.
+3. **Alternative Data Streams (Congress & Insider Trading)**: Dedicated agents pulling real-time Form-4 insider transaction logs. The Risk Gatekeeper will explicitly reject `BUY` signals if the C-Suite of the target ticker has been aggressively dumping shares.
+4. **Chat With Your Portfolio**: An interactive Chatbox on the frontend querying the local Postgres `AuditLog` databases. Users can interactively ask: *"Why did we get stopped out on AAPL yesterday?"* and the agent will dynamically query the precise slippage and original rationale timestamps.
+5. **Redux & WebSockets (WSS)**: Transitioning the FastAPI backend to an asynchronous WebSocket stream, pushing sub-millisecond price flashes to the React interface, abandoning standard REST `setInterval` polling logic to closely mimic Bloomberg Terminal latency.
