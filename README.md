@@ -1,25 +1,44 @@
 # 🤖 Agentic Trading App
 
-A full-stack, cloud-native agentic trading platform built on **FastAPI**, **React**, and **Kubernetes**. An LLM-powered Strategy Agent proposes trades, a deterministic Risk Manager gatekeeps every signal with hard mathematical constraints, and an Execution Agent routes approved orders to Alpaca's paper trading API.
+A full-stack, cloud-native agentic trading platform built on **FastAPI**, **React**, and **AWS EKS**. An LLM-powered Strategy Agent proposes trades, a deterministic Risk Gatekeeper enforces hard mathematical constraints, and an Execution Agent routes approved orders to Alpaca's paper trading API.
 
-> ⚠️ **NOT FINANCIAL ADVICE.** This application is for educational and research purposes only. Do not use with real capital without extensive professional review.
+> ⚠️ **NOT FINANCIAL ADVICE.** Paper trading only. For educational and research purposes.
 
 ---
 
-## Architecture Overview
+## Live Deployment
+
+| | |
+|---|---|
+| **Cluster** | `agentic-trading-cluster` (AWS EKS, us-east-1) |
+| **Namespace** | `agentic-trading-platform` |
+| **Get URL** | Run the **Get App URL** GitHub Actions workflow |
+
+To get your live app URL at any time:
+1. Go to `Actions → Get App URL → Run workflow`
+2. Open the run summary — URL is printed there
+
+---
+
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    React Frontend (Vite)                     │
-│         SSE stream · Quote Lookup · Audit Journal           │
+│                  React Frontend (Vite)                      │
+│   ⭐ Watchlist · Dashboard · Market Movers · Quote · Audit  │
 └──────────────────────────┬──────────────────────────────────┘
-                           │ HTTP + SSE (X-API-Key auth)
+                           │ HTTP + SSE  (X-API-Key)
 ┌──────────────────────────▼──────────────────────────────────┐
 │                  FastAPI Backend (Python)                    │
 │                                                             │
-│  MarketDataAgent → StrategyAgent (LLM) → RiskManager        │
-│                                        → ExecutionAgent     │
-│                                        → AlpacaPaperBroker  │
+│  MarketScheduler ──► MarketDataAgent ──► StrategyAgent      │
+│  (20min / ticker)              (LLM signal)                 │
+│                                        │                    │
+│                           DeterministicRiskManager          │
+│                           (hard math gates — no LLM bypass) │
+│                                        │                    │
+│                              ExecutionAgent                 │
+│                              AlpacaPaperBroker              │
 └──────────────┬──────────────────────────────────────────────┘
                │
      ┌─────────▼──────────┐
@@ -32,11 +51,30 @@ A full-stack, cloud-native agentic trading platform built on **FastAPI**, **Reac
 
 | Stage | Agent | Description |
 |---|---|---|
-| 1 | **MarketDataAgent** | Fetches live price, ATR, SMA, VIX, earnings dates via yfinance |
-| 2 | **StrategyAgent** | Feeds context to OpenAI GPT-4o-mini (or mock LLM) for BUY/SELL/HOLD signal |
-| 3 | **DeterministicRiskManager** | Hard mathematical gates — LLM cannot bypass these |
-| 4 | **ExecutionAgent** | Routes `RiskApproved` events to broker with exponential backoff |
-| 5 | **SyncWorker** | Periodic reconciliation — broker is always source of truth |
+| 1 | **MarketScheduler** | Triggers agent loops every 20 min per ticker, Mon–Fri 09:35–15:40 ET |
+| 2 | **MarketDataAgent** | Fetches price, ATR-14, SMA-20/50, VIX, real earnings dates (yfinance) |
+| 3 | **StrategyAgent** | GPT-4o-mini signal: BUY / SELL / HOLD with rationale |
+| 4 | **DeterministicRiskManager** | 8 hard gates — LLM cannot bypass |
+| 5 | **ExecutionAgent** | Routes `RiskApproved` → broker with exponential backoff |
+| 6 | **SyncWorker** | Periodic reconciliation — broker is always source of truth |
+| 7 | **EOD Sweep** | Auto-closes all positions at 15:45 ET (day trading mode) |
+
+---
+
+## Watchlist & Day Trading Config
+
+Default watchlist: **AAOI, BWIN, DELL, FIGS, SSL**
+
+| Config | Value | Description |
+|---|---|---|
+| Style | `day_trading` | In/out same session |
+| Risk profile | `conservative` | Tight stops, small size |
+| Risk per trade | **1%** of equity | Max $ at risk per entry |
+| ATR stop | **1×** ATR-14 | Tighter than swing (2×) |
+| Max position | **3%** of equity | Per-ticker cap |
+| Max open | **3** positions | Concurrent limit |
+| Scan interval | **20 min** | Per-ticker during market hours |
+| EOD close | **15:45 ET** | All positions auto-closed daily |
 
 ---
 
@@ -46,46 +84,113 @@ A full-stack, cloud-native agentic trading platform built on **FastAPI**, **Reac
 |---|---|
 | Max account drawdown (HWM) | 10% |
 | Daily loss circuit breaker | 3% |
-| Max single position size | 5% equity |
+| Max single position size | 3% equity (day trading) / 5% default |
 | Max sector exposure | 20% equity |
 | Min average daily volume | 5,000,000 shares |
-| Max VIX for new longs | 35.0 |
+| Max VIX for new longs | 35.0 (defaults to 99.0 on fetch failure) |
 | Earnings blackout window | 3 days |
-| Risk per trade | 1% equity |
+| ATR stop multiplier | 1× (day trading) / 2× (swing) |
 
 ---
 
 ## Quick Start (Local Development)
 
-### Prerequisites
-- Python 3.11+
-- Node.js 18+
-- (Optional) OpenAI API key
-- (Optional) Alpaca paper trading account
-
 ### Backend
-
 ```bash
 cd backend
-cp .env.example .env
-# Edit .env — add OPENAI_API_KEY if you have one (mock LLM used otherwise)
-
+cp .env.example .env        # Fill in your keys
 pip install -r requirements.txt
 uvicorn app:app --reload --port 8000
 ```
 
 ### Frontend
-
 ```bash
 cd frontend
-cp .env.example .env
-# Edit .env — set VITE_API_BASE_URL=http://127.0.0.1:8000
-
+cp .env.example .env        # Set VITE_API_BASE_URL + VITE_API_KEY
 npm install
-npm run dev
+npm run dev                 # http://localhost:5173
 ```
 
-Visit `http://localhost:5173`
+---
+
+## API Reference
+
+All endpoints require `X-API-Key` header (or `?api_key=` for SSE).
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/health` | Liveness/readiness probe |
+| `GET` | `/api/watchlist` | Current watchlist + trading config |
+| `PUT` | `/api/watchlist` | Update watchlist tickers |
+| `POST` | `/api/watchlist/scan` | Scan all watchlist tickers now |
+| `POST` | `/api/watchlist/close-all` | Close all open positions (manual EOD) |
+| `POST` | `/api/trigger` | Trigger agent loop for one ticker |
+| `GET` | `/api/stream` | SSE — real-time logs, insights, positions |
+| `GET` | `/api/portfolio` | Open positions + account value |
+| `GET` | `/api/quote/{ticker}` | Quote + fundamentals |
+| `GET` | `/api/movers` | Top gainers, losers, most active |
+| `GET` | `/api/logs` | Last 20 audit entries |
+| `GET` | `/api/insights` | Last 20 AI strategy insights |
+| `GET` | `/api/market-data` | Stored market snapshots |
+| `DELETE` | `/api/market-data` | Clear market data records |
+
+---
+
+## Project Structure
+
+```
+agentic-trading-app/
+├── .github/
+│   └── workflows/
+│       ├── deploy.yml          # CI/CD: lint → build → provision EKS → deploy
+│       ├── get-app-url.yml     # Manual: prints live ALB URL
+│       └── destroy.yml         # Manual: tear down all infrastructure
+├── backend/
+│   ├── agents/
+│   │   ├── market_data.py      # yfinance data + earnings calendar (module-level cache)
+│   │   ├── movers.py           # Gainers/losers: yf.screen() + watchlist fallback
+│   │   ├── strategy.py         # LLM client + StrategyAgent
+│   │   └── prompts.py          # System & user prompt templates
+│   ├── core/
+│   │   ├── database.py         # SQLAlchemy models
+│   │   ├── day_trading.py      # Day trading risk overrides + EOD close
+│   │   ├── portfolio_state.py  # PortfolioState + MarketContext (Pydantic)
+│   │   ├── risk_gatekeeper.py  # DeterministicRiskManager (configurable ATR/pos)
+│   │   ├── scheduler.py        # MarketScheduler (20min scan, EOD sweep)
+│   │   └── watchlist.py        # TradingConfig + watchlist singleton
+│   ├── trading_interface/
+│   │   ├── broker/             # AbstractBrokerAPI + AlpacaPaperBroker
+│   │   ├── events/schemas.py   # Pydantic event schemas
+│   │   ├── execution/agent.py  # ExecutionAgent + exponential backoff
+│   │   ├── reconciliation/     # SyncWorker (broker = source of truth)
+│   │   └── security/           # API key auth + ticker sanitization
+│   ├── app.py                  # FastAPI app + all endpoints + startup scheduler
+│   ├── main.py                 # Standalone lifecycle demo
+│   ├── .env.example
+│   └── requirements.txt
+├── frontend/
+│   └── src/
+│       └── App.jsx             # React UI (Watchlist, Dashboard, Movers, Quote, Audit)
+├── k8s-deploy.yaml             # EKS manifests (secrets, resource limits, probes)
+├── deploy.sh                   # One-shot local deployment script
+├── README.md
+├── ARCHITECTURE.md
+├── DEPLOYMENT.md
+├── AGENTIC_TRADING_SPEC.md
+├── ALPACA_INTEGRATION.md
+├── SOC2_COMPLIANCE.md
+└── TRADING_INTERFACE_SPEC.md
+```
+
+---
+
+## GitHub Actions Workflows
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `deploy.yml` | Push to `master` | Lint → ECR build/push → EKS provision → rolling deploy |
+| `get-app-url.yml` | Manual | Prints live ALB URL + pod status |
+| `destroy.yml` | Manual (`DESTROY`) | Tears down cluster + all AWS resources |
 
 ---
 
@@ -95,132 +200,31 @@ Visit `http://localhost:5173`
 
 | Variable | Required | Description |
 |---|---|---|
-| `OPENAI_API_KEY` | No | GPT-4o-mini key. Omit to use deterministic mock LLM |
+| `OPENAI_API_KEY` | No | GPT-4o-mini. Omit for deterministic mock LLM |
 | `ALPACA_API_KEY` | No | Alpaca paper account key |
 | `ALPACA_SECRET_KEY` | No | Alpaca paper account secret |
-| `APP_API_KEY` | **Yes (prod)** | Random secret for `X-API-Key` header auth |
+| `APP_API_KEY` | **Yes (prod)** | `X-API-Key` header secret. Generate: `openssl rand -hex 32` |
 | `DATABASE_URL` | No | Defaults to SQLite. Set PostgreSQL URL for production |
 | `CORS_ALLOWED_ORIGINS` | No | Comma-separated allowed frontend origins |
-
-Generate a secure `APP_API_KEY`:
-```bash
-openssl rand -hex 32
-```
 
 ### Frontend (`frontend/.env`)
 
 | Variable | Description |
 |---|---|
-| `VITE_API_BASE_URL` | Backend URL (e.g. `http://127.0.0.1:8000`) |
+| `VITE_API_BASE_URL` | Backend URL (e.g. `http://your-alb.elb.amazonaws.com`) |
 | `VITE_API_KEY` | Must match backend `APP_API_KEY` |
 
 ---
 
-## API Endpoints
+## Security
 
-All endpoints require `X-API-Key` header (or `?api_key=` query param for SSE).
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/health` | K8s liveness/readiness probe |
-| `POST` | `/api/trigger` | Kick off agent loop for a ticker |
-| `GET` | `/api/stream` | SSE stream — real-time logs, insights, positions |
-| `GET` | `/api/portfolio` | Current open positions + account value |
-| `GET` | `/api/quote/{ticker}` | Company info and fundamentals |
-| `GET` | `/api/movers` | Top gainers, losers, most active |
-| `GET` | `/api/logs` | Last 20 audit log entries |
-| `GET` | `/api/insights` | Last 20 AI strategy insights |
-| `GET` | `/api/market-data` | Stored market data snapshots |
-| `DELETE` | `/api/market-data` | Clear market data records |
-
----
-
-## Kubernetes Deployment (AWS EKS)
-
-### 1. Create Secrets
-
-```bash
-kubectl create secret generic trading-app-secrets \
-  --from-literal=openai-api-key="sk-..." \
-  --from-literal=alpaca-api-key="PK..." \
-  --from-literal=alpaca-secret-key="..." \
-  --from-literal=app-api-key="$(openssl rand -hex 32)" \
-  --from-literal=database-url="postgresql://user:pass@rds-host:5432/trading"
-```
-
-### 2. Build & Push Images
-
-```bash
-export AWS_ACCOUNT_ID=<your-account-id>
-export AWS_REGION=us-east-1
-
-# Login to ECR
-aws ecr get-login-password --region $AWS_REGION | \
-  docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
-
-# Build and push
-docker build -t agentic-trading-backend ./backend
-docker tag agentic-trading-backend:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/agentic-trading-backend:latest
-docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/agentic-trading-backend:latest
-
-docker build -t agentic-trading-frontend ./frontend
-docker tag agentic-trading-frontend:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/agentic-trading-frontend:latest
-docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/agentic-trading-frontend:latest
-```
-
-### 3. Deploy
-
-```bash
-# Substitute account ID and region into the manifest
-export AWS_ACCOUNT_ID=<your-account-id>
-export AWS_REGION=us-east-1
-envsubst < k8s-deploy.yaml | kubectl apply -f -
-```
-
----
-
-## Security Model
-
-- **Authentication:** All API endpoints protected by `X-API-Key` header validation
-- **Secrets:** All credentials stored in Kubernetes Secrets — never in plaintext YAML or source control
-- **CORS:** Configured via `CORS_ALLOWED_ORIGINS` environment variable
-- **Ticker sanitization:** All user-supplied ticker inputs validated against `^[A-Z]{1,5}$` regex
-- **Rate limiting:** `/api/trigger` has a 10-second per-ticker cooldown
-- **Paper mode enforcement:** `AlpacaPaperBroker` hardcodes paper API URL regardless of input
-- **K8s account ID:** Never committed — injected at deploy time via `envsubst`
-
----
-
-## Project Structure
-
-```
-agentic-trading-app/
-├── backend/
-│   ├── agents/
-│   │   ├── market_data.py        # yfinance data fetcher + earnings calendar
-│   │   ├── strategy.py           # LLM client + StrategyAgent
-│   │   └── prompts.py            # System & user prompt templates
-│   ├── core/
-│   │   ├── database.py           # SQLAlchemy models (positions, logs, insights)
-│   │   ├── portfolio_state.py    # PortfolioState + MarketContext Pydantic models
-│   │   └── risk_gatekeeper.py    # DeterministicRiskManager
-│   ├── trading_interface/
-│   │   ├── broker/               # AbstractBrokerAPI + AlpacaPaperBroker
-│   │   ├── events/schemas.py     # Pydantic event schemas
-│   │   ├── execution/agent.py    # ExecutionAgent + retry logic
-│   │   ├── reconciliation/job.py # SyncWorker (broker = source of truth)
-│   │   └── security/             # API key auth + ticker sanitization
-│   ├── app.py                    # FastAPI application + all endpoints
-│   ├── main.py                   # Standalone lifecycle demo
-│   └── requirements.txt
-├── frontend/
-│   └── src/
-│       └── App.jsx               # React UI with SSE stream
-├── k8s-deploy.yaml               # Kubernetes manifests (EKS + ALB)
-├── ARCHITECTURE.md
-├── DEPLOYMENT.md
-└── README.md
-```
+- All API endpoints protected by `X-API-Key` authentication
+- All credentials stored in Kubernetes Secrets — never in YAML or source control
+- AWS Account ID never committed — injected at deploy time via `envsubst`
+- Ticker inputs validated against `^[A-Z]{1,5}$` regex
+- `/api/trigger` rate-limited (10s cooldown per ticker)
+- Paper broker URL hardcoded — live mode requires explicit code change
+- ECR image scanning enabled on push
 
 ---
 
@@ -228,6 +232,7 @@ agentic-trading-app/
 
 - [Architecture Deep Dive](ARCHITECTURE.md)
 - [Deployment Guide](DEPLOYMENT.md)
-- [Alpaca Integration](ALPACA_INTEGRATION.md)
-- [SOC2 Compliance Notes](SOC2_COMPLIANCE.md)
 - [Agentic Trading Spec](AGENTIC_TRADING_SPEC.md)
+- [Alpaca Integration](ALPACA_INTEGRATION.md)
+- [Trading Interface Spec](TRADING_INTERFACE_SPEC.md)
+- [SOC2 Compliance Notes](SOC2_COMPLIANCE.md)

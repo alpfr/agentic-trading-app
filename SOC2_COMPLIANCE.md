@@ -1,39 +1,130 @@
 # SOC 2 Compliance & Security Overview
 
-The Agentic Trading Application is designed with enterprise-grade security and compliance in mind, aligning with the five **Trust Service Criteria** outlined by the AICPA for SOC 2 Type I and Type II compliance: Security, Availability, Processing Integrity, Confidentiality, and Privacy.
+This document describes how the Agentic Trading App aligns with the five AICPA Trust Service Criteria for SOC 2.
 
-## 1. Security (Protection against unauthorized access)
+---
 
-### Infrastructure Security
+## 1. Security — Protection Against Unauthorized Access
 
-- **Containerization**: Both frontend and backend environments run in isolated, immutable Docker containers strictly sourced from minimal alpine/slim base images to reduce attack surfaces.
-- **Vulnerability Scanning**: Docker images pushed to AWS Elastic Container Registry (ECR) can be configured with "Scan on Push" to instantly detect CVEs (Common Vulnerabilities and Exposures) within the OS or Python/Node dependencies.
-- **Network Isolation**: Inside the AWS EKS environment, the `agentic-trading-backend` is scoped as a `ClusterIP` Service. This means the Python server cannot be directly accessed from the internet. It only accepts traffic routed securely through the AWS Application Load Balancer (ALB).
+### Authentication
+- All API endpoints protected by `X-API-Key` header validation
+- `require_api_key()` FastAPI dependency applied globally
+- SSE endpoint accepts `?api_key=` query param (required for browser `EventSource`)
+- Key stored in Kubernetes Secret — not in environment files or source code
+
+### Input Validation
+- All user-supplied ticker symbols validated against `^[A-Z]{1,5}$` regex
+- `sanitize_ticker()` applied before any DB write or external API call
+- Pydantic schema validation on all request bodies
+
+### Rate Limiting
+- `/api/trigger` enforces 10-second per-ticker cooldown (in-process token bucket)
+- Yahoo Finance calls cached to avoid external API abuse
 
 ### Secret Management
+- All credentials (OpenAI, Alpaca, App API key, DB URL) stored exclusively in Kubernetes Secrets
+- Secrets injected as pod environment variables via `secretKeyRef`
+- No secrets in `k8s-deploy.yaml`, no secrets in source control
+- AWS Account ID never committed — substituted at deploy time via `envsubst`
+- GitHub Actions secrets encrypted with repo public key (NaCl sealed box)
 
-- **API Keys**: Keys for OpenAI (`OPENAI_API_KEY`) and Broker networks (Alpaca) are strictly prohibited from being hardcoded. They are injected as environment variables natively mapped from Kubernetes Secrets during container orchestration.
+### Network Security
+- Backend exposed only as `ClusterIP` — not directly reachable from internet
+- All internet traffic routed through AWS ALB
+- ECR image scanning enabled on push (detects CVEs in OS and dependencies)
+- CORS origins configurable via `CORS_ALLOWED_ORIGINS` environment variable
 
-## 2. Availability (System uptime and resilience)
+### Container Security
+- Minimal base images (python:3.11-slim, node:20-alpine)
+- No root process in containers
+- Read-only filesystem where possible
+- Resource limits enforced (CPU: 250m–1000m, Memory: 512Mi–1Gi backend)
 
-- **Kubernetes Orchestration**: The application utilizes AWS EKS to manage lifecycles. If the backend or frontend pods crash due to memory or runtime errors, the EKS control plane will automatically revive them to maintain the baseline `replicas` configuration.
-- **Load Balancing**: The AWS ALB Ingress Controller actively monitors the health of the Kubernetes nodes and intelligently routes internet traffic away from failing partitions.
-- **Horizontal Scaling**: The architecture natively supports Kubernetes Horizontal Pod Autoscalers (HPA). As network or computational traffic increases (e.g., during heavy market hours), identical replicas of the ASGI Uvicorn workers or Nginx frontends can rapidly spin up.
+---
 
-## 3. Processing Integrity (System achieves its purpose accurately)
+## 2. Availability — System Uptime and Resilience
 
-In an AI-driven quantitative application, protecting against non-deterministic outputs is critical.
+### Kubernetes HA
+- 2 replicas for both backend and frontend deployments
+- Rolling update strategy: `maxSurge=1, maxUnavailable=0` — zero downtime deploys
+- EKS managed node group autoscales 1–4 nodes based on demand
 
-- **Deterministic Risk Gatekeeper**: The system strictly separates the "Brain" (Strategy LLM) from the "Hands" (Execution Agent). The LLM cannot perform a trade directly. Every generated signal must pass through the mathematically static `RiskManager` which explicitly calculates maximum drawdowns, volume thresholds, and capital allocations before authorizing broker-level execution.
-- **Immutable Audit Logging**: Every major orchestration step—Market Data Syncing, LLM Processing, Risk Evaluations, and Order Fills—is recorded in a strict append-only Audit Journal visible in the `/api/logs` UI. This allows compliance officers to trace exactly *why* a trade was placed and *who/what* authorized it.
-- **Schema Enforcement**: The Strategy Agent relies on strict `Pydantic` schemas. If the OpenAI LLM hallucinates an invalid JSON structure, it is caught at the API boundary, resulting in an automatic fallback to "HOLD" and avoiding catastrophic downstream state corruptions.
+### Health Probes
+- `livenessProbe`: GET `/health` every 20s — restarts unhealthy pods automatically
+- `readinessProbe`: GET `/health` every 10s — removes pods from load balancer before restart
+- Both probes configured on backend and frontend
 
-## 4. Confidentiality (Protection of sensitive data)
+### Load Balancing
+- AWS ALB routes traffic only to healthy pods
+- Multi-AZ node group distributes workload across availability zones
 
-- **Database at Rest**: Currently, market cache datasets are held in a local `SQLite` volume. For full SOC 2 production certification, this volume maps to AWS RDS Postgres featuring KMS (Key Management Service) AES-256 encryption-at-rest.
-- **Data in Transit**: The AWS Application Load Balancer natively terminates TLS/SSL (HTTPS) from the physical client. By configuring AWS Certificate Manager (ACM) alongside the active ALB Ingress, all external API traffic is robustly encrypted.
+### Data Persistence
+- SQLite (dev): ephemeral — lost on pod restart
+- PostgreSQL via `DATABASE_URL` (production): persistent, survives pod restarts
+- Audit logs are append-only — no accidental data loss from application code
 
-## 5. Privacy (Protection of Personal Information - PII)
+---
 
-- **Absolute Zero PII**: The current prototype explicitly does not collect mapping identifiers, email addresses, credit cards, or internal user identities. Access is centralized for the quantitative operator.
-- **Financial Segregation**: Broker connectivity utilizes strict API Key mapping without transmitting standard consumer passwords across the frontend layer.
+## 3. Processing Integrity — Accurate and Complete Processing
+
+### Deterministic Risk Engine
+- All risk calculations use pure Python math — no LLM, no randomness
+- 8 hard gates evaluated in sequence before any order reaches the broker
+- `RiskRejected` events written to audit log with specific failure reason
+- LLM signal (HOLD / BUY / SELL) cannot bypass any gate
+
+### Idempotency
+- Each order assigned a UUID `client_order_id` before broker submission
+- Duplicate submissions (e.g., from retries) rejected by Alpaca based on `client_order_id`
+
+### Reconciliation
+- `SyncWorker` periodically compares broker positions vs internal DB positions
+- Broker is always the source of truth
+- Drift > 5% of portfolio triggers kill switch
+
+### Fail-Safes
+- VIX fetch failure → defaults to 99.0 (blocks new longs — fail-safe, not fail-open)
+- Earnings date fetch failure → defaults to 999 days (no blackout triggered)
+- LLM malformed output → defaults to HOLD signal
+
+---
+
+## 4. Confidentiality — Protection of Sensitive Information
+
+### Data Classification
+| Data | Classification | Storage |
+|---|---|---|
+| API keys | Secret | Kubernetes Secrets only |
+| Trade history | Internal | SQLite/PostgreSQL (encrypted at rest in RDS) |
+| Audit logs | Internal | DB — append-only |
+| Market data | Public | Cached in DB for performance |
+
+### Logging Policy
+- No API keys, no secrets logged anywhere in application code
+- No PII collected or stored
+- Audit logs contain only: timestamp, agent, action, ticker, reason
+
+### Transmission Security
+- HTTPS recommended for production (configure ALB SSL termination + ACM certificate)
+- Internal cluster traffic (pod-to-pod) stays within VPC — never traverses internet
+
+---
+
+## 5. Privacy — Personal Information Handling
+
+This application does not collect, store, or process personal information (PII) in its default configuration. No user accounts, no personal data beyond what Alpaca stores in its own platform.
+
+---
+
+## Recommended Production Hardening
+
+| Item | Current State | Recommended |
+|---|---|---|
+| TLS/HTTPS | HTTP (ALB) | Add ACM cert + HTTPS listener to ALB |
+| WAF | None | Add AWS WAF to ALB for IP allowlist / rate limiting |
+| Database encryption | SQLite (unencrypted) | RDS PostgreSQL with encryption at rest |
+| Secrets rotation | Manual | AWS Secrets Manager with automatic rotation |
+| Network policies | None | Add Kubernetes NetworkPolicy to restrict pod-to-pod traffic |
+| Multi-replica rate limit | In-process (per pod) | Replace with Redis TTL key for cross-replica enforcement |
+| Image signing | None | Add cosign image signing in CI/CD pipeline |
+| Audit log integrity | DB rows | Export to append-only S3 bucket with object lock |

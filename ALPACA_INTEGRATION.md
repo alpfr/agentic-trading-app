@@ -1,81 +1,139 @@
-# Alpaca Trader Integration Guide
+# Alpaca Integration Guide
 
-The Agentic Trading Application natively supports both "Paper Trading" (simulated) and "Live Trading" via the **Alpaca Markets** brokerage API. The architecture dictates that the `ExecutionAgent` routes all finalized `RiskApproved` signals directly to the `AlpacaPaperBroker` client.
-
-This guide explains how to unlock the execution layer and connect it to a real Alpaca account.
+The Agentic Trading App routes all approved trade signals to **Alpaca Markets** via the `AlpacaPaperBroker`. The paper trading API is enforced by default — live trading requires an explicit code change.
 
 ---
 
-## 1. Obtain Alpaca API Keys
+## Your Paper Account
 
-1. Create a free account at [Alpaca Markets](https://app.alpaca.markets/signup).
-2. Log in to your dashboard and verify your desired environment (ensure you are on the **Paper Trading** dashboard first if you want to test without real money).
-3. On the right-hand side of the dashboard, click on **"View API Keys"**.
-4. Generate a new key pair:
-   - **Key ID**
-   - **Secret Key**
+| Field | Value |
+|---|---|
+| API Endpoint | `https://paper-api.alpaca.markets/v2` |
+| Account ID | `PA31MF1P0QZ5` |
+| Environment | Paper (simulated) |
 
-*Note: Alpaca generates completely different keys for Live accounts vs. Paper accounts. Ensure you are using the correct pair.*
+API keys are stored in the Kubernetes Secret `trading-app-secrets` and never appear in source code.
 
 ---
 
-## 2. Configure the Backend `.env`
+## Setup
 
-In the `backend/` directory of your project, locate or create the `.env` file (you can copy `.env.example`).
+### 1. Get API Keys
+1. Log in at [app.alpaca.markets](https://app.alpaca.markets)
+2. Ensure you are on the **Paper Trading** dashboard
+3. Click **View API Keys** → Generate a key pair (Key ID + Secret Key)
 
-Add the following exact environment variables:
+### 2. Store Keys
 
-```env
-# Existing OpenAI Key for the Strategy Agent
-OPENAI_API_KEY="sk-..."
+**In Kubernetes (production):**
+```bash
+kubectl create secret generic trading-app-secrets \
+  --from-literal=alpaca-api-key="PK..." \
+  --from-literal=alpaca-secret-key="..." \
+  --dry-run=client -o yaml \
+  -n agentic-trading-platform | kubectl apply -f -
+```
 
-# New Alpaca Keys for the Execution Agent
-ALPACA_API_KEY="PK..."
-ALPACA_API_SECRET="..."
+**In GitHub Secrets (CI/CD):**
+- `ALPACA_API_KEY` → your Key ID
+- `ALPACA_SECRET_KEY` → your Secret Key
+
+**Locally:**
+```bash
+# backend/.env
+ALPACA_API_KEY=PK...
+ALPACA_SECRET_KEY=...
 ```
 
 ---
 
-## 3. Enable the Python Broker Initialization
+## How Orders Are Routed
 
-By default, the backend explicitly skips strict Alpaca authentication in `app.py` so that developers can test the application locally without requiring a brokerage account.
-
-To enable the actual Alpaca routing:
-
-1. Open `backend/app.py`.
-2. Locate the Execution Agent routing section inside `run_agent_loop`:
-
-```python
-    # 3. Execution Agent Routes to Alpaca Paper
-    executor = ExecutionAgent(broker=BROKER_CLIENT, is_live_mode=False)
+```
+RiskApproved event
+    │
+    ▼
+ExecutionAgent.execute_approved_risk()
+    │  staleness check (< 5 min)
+    │  build OrderRequest
+    ▼
+AlpacaPaperBroker.place_order(OrderRequest)
+    │  POST https://paper-api.alpaca.markets/v2/orders
+    │  {
+    │    symbol:        ticker,
+    │    qty:           shares,
+    │    side:          buy | sell,
+    │    type:          market,
+    │    time_in_force: day,
+    │    client_order_id: <uuid>    ← idempotency key
+    │  }
+    ▼
+Alpaca fills order (simulated)
+    ▼
+StoredPosition updated in DB
 ```
 
-1. Ensure the broker actually initializes its connection by passing the credentials from the environment. Currently, it fakes the authentication using `("mock", "mock", "PAPER")`.
+---
 
-*If your underlying `BROKER_CLIENT.authenticate` method is designed to pull from `os.getenv` automatically when no arguments are passed, then simply remove the mock strings or construct the native client properly according to your `trading_interface/broker/alpaca_paper.py` schema.*
+## Order Types Used
+
+| Scenario | Order Type | TIF |
+|---|---|---|
+| BUY_TO_OPEN | market | day |
+| SELL_TO_CLOSE | market | day |
+| EOD_CLOSE | market | day |
+
+Market orders are used for simplicity and guaranteed fill. Future versions may add limit orders for better fill prices.
 
 ---
 
-## 4. Toggle the Frontend (Optional)
+## Monitoring Fills
 
-The Frontend UI features a "PAPER TRADING ONLY" badge by default.
+Alpaca paper fills can be monitored at:
+- **Dashboard:** `https://app.alpaca.markets/paper/dashboard/overview`
+- **Orders page:** Shows all placed, filled, and cancelled orders
+- **App audit log:** `GET /api/logs` or the Audit Journal tab in the UI
 
-To reflect the connected state in the dashboard visually:
-
-1. Open `frontend/src/App.jsx`.
-2. Locate the `isLiveMode` state toggle at the top of the file:
-
-   ```javascript
-   const [isLiveMode, setIsLiveMode] = useState(false);
-   ```
-
-3. Set this to `true` (or wire it to an actual endpoint that returns `true` when Alpaca API keys are successfully detected by the backend).
-4. The sidebar will turn red and display "**LIVE TRADING MODE**" with a Shield Alert icon.
+The `SyncWorker` reconciles broker positions against the internal DB every few minutes.
 
 ---
 
-## Security Warning
+## Live Trading (Disabled by Default)
 
-**Never commit your `.env` file or your `ALPACA_API_SECRET` to GitHub!**
+Live trading is **not configurable via environment variable** — it requires a code change to prevent accidental live execution.
 
-The `.gitignore` inside the `backend/` directory is already configured to ignore `.env`, but if you deploy to AWS EKS or another cloud provider, ensure you inject these Alpaca keys securely via Kubernetes Secrets and map them strictly as Environment Variables within the container.
+To enable (advanced users only):
+1. Change `AlpacaPaperBroker` base URL from `paper-api.alpaca.markets` to `api.alpaca.markets`
+2. Use Live account API keys (different from paper keys)
+3. Add explicit human confirmation gates before each order
+4. Thoroughly review and test all risk parameters
+
+> ⚠️ The authors accept no responsibility for financial losses from live trading.
+
+---
+
+## Alpaca Rate Limits
+
+| Endpoint | Limit |
+|---|---|
+| Orders (place) | 200 req/min |
+| Account info | 200 req/min |
+| Positions | 200 req/min |
+
+The `ExecutionAgent` handles `429 Too Many Requests` with exponential backoff (base 2s, max 3 retries).
+
+---
+
+## Supported Assets
+
+Alpaca paper trading supports US equities traded on NYSE, NASDAQ, and AMEX. Your current watchlist:
+
+| Ticker | Exchange | Notes |
+|---|---|---|
+| AAOI | NASDAQ | Applied Optoelectronics — small cap, volatile |
+| BWIN | OTC | Better World Acquisition — lower liquidity, watch spreads |
+| DELL | NYSE | Dell Technologies — liquid, mid-large cap |
+| FIGS | NYSE | FIGS Inc — consumer/healthcare |
+| SSL | NYSE | Sasol Ltd (ADR) — commodity-linked, lower volume |
+
+> ⚠️ **BWIN** trades OTC. Alpaca may have limited or no support for OTC securities. If BWIN orders are rejected, remove it from the watchlist via `PUT /api/watchlist`.
