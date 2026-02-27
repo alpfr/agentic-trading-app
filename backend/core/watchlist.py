@@ -11,7 +11,7 @@ from typing import List
 # ── Default watchlist ─────────────────────────────────────────────────────────
 # BWIN removed: OTC-listed — Alpaca does not support OTC securities.
 # Replaced with PLTR (NYSE, liquid, similar small/mid-cap momentum profile).
-DEFAULT_WATCHLIST = ["AAOI", "PLTR", "DELL", "FIGS", "SSL"]
+DEFAULT_WATCHLIST = ["AAOI", "BWIN", "DELL", "FIGS", "SSL"]
 
 # ── Trading style config ──────────────────────────────────────────────────────
 @dataclass
