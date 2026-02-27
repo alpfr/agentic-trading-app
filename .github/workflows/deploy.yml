@@ -305,7 +305,7 @@ jobs:
             --from-literal=admin-username="${{ secrets.ADMIN_USERNAME }}" \
             --from-literal=admin-password-hash="${{ secrets.ADMIN_PASSWORD_HASH }}" \
             --from-literal=admin-totp-secret="${{ secrets.ADMIN_TOTP_SECRET }}" \
-            --from-literal=cors-allowed-origins="${{ secrets.CORS_ALLOWED_ORIGINS }}" \
+            --from-literal=cors-allowed-origins="${{ secrets.CORS_ALLOWED_ORIGINS || 'https://agentictradepulse.opssightai.com' }}" \
             --from-literal=database-url="${{ secrets.DATABASE_URL }}" \
             --dry-run=client -o yaml | kubectl apply -f -
           echo "K8s secrets applied"
@@ -339,7 +339,30 @@ jobs:
         run: |
           aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
 
+      - name: Resolve ACM certificate ARN
+        id: acm
+        run: |
+          # Auto-resolve the ACM cert ARN for opssightai.com
+          # Override by setting ACM_CERT_ARN in GitHub Secrets.
+          if [ -n "${{ secrets.ACM_CERT_ARN }}" ]; then
+            echo "cert_arn=${{ secrets.ACM_CERT_ARN }}" >> $GITHUB_OUTPUT
+            echo "Using manually set ACM_CERT_ARN secret"
+          else
+            CERT_ARN=$(aws acm list-certificates \
+              --region "$AWS_REGION" \
+              --query "CertificateSummaryList[?contains(DomainName,'opssightai.com') && Status=='ISSUED'].CertificateArn" \
+              --output text | awk '{print $1}')
+            if [ -z "$CERT_ARN" ]; then
+              echo "::error::No issued ACM certificate found for opssightai.com. Set ACM_CERT_ARN in GitHub Secrets."
+              exit 1
+            fi
+            echo "cert_arn=$CERT_ARN" >> $GITHUB_OUTPUT
+            echo "Resolved ACM cert: $CERT_ARN"
+          fi
+
       - name: Generate deployment manifest
+        env:
+          ACM_CERT_ARN: ${{ steps.acm.outputs.cert_arn }}
         run: |
           ECR_BASE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           IMAGE_TAG="${{ needs.build-and-push.outputs.image-tag }}"
@@ -385,7 +408,7 @@ jobs:
                       memory: "1Gi"
                   env:
                   - name: CORS_ALLOWED_ORIGINS
-                    value: "*"
+                    value: "https://agentictradepulse.opssightai.com"
                   - name: OPENAI_API_KEY
                     valueFrom:
                       secretKeyRef:
@@ -517,9 +540,15 @@ jobs:
               alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
               alb.ingress.kubernetes.io/success-codes: "200"
               alb.ingress.kubernetes.io/load-balancer-name: agentic-trading-alb
+              alb.ingress.kubernetes.io/certificate-arn: ${ACM_CERT_ARN}
+              alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+              alb.ingress.kubernetes.io/ssl-redirect: '443'
+              alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+              alb.ingress.kubernetes.io/load-balancer-attributes: routing.http.drop_invalid_header_fields.enabled=true
           spec:
             rules:
-            - http:
+            - host: agentictradepulse.opssightai.com
+              http:
                 paths:
                 - path: /api
                   pathType: Prefix

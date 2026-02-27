@@ -28,31 +28,40 @@ ALB is configured with:
 - `ssl-redirect: '443'` — all HTTP traffic redirected to HTTPS
 - `ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06` — TLS 1.2 minimum, TLS 1.3 preferred
 
-### Enabling Your Certificate
+### Certificate & Domain
 
+The certificate for `opssightai.com` already exists in ACM.
+The CI/CD pipeline **automatically resolves** the cert ARN from ACM by domain name —
+no manual ARN copying needed.
+
+To verify the cert is found:
 ```bash
-# Step 1: Request an ACM certificate (DNS validation recommended)
-aws acm request-certificate \
-  --domain-name yourdomain.com \
-  --subject-alternative-names "*.yourdomain.com" \
-  --validation-method DNS \
-  --region us-east-1
-
-# Step 2: Complete DNS validation in Route 53 or your DNS provider
-
-# Step 3: Add the ARN to GitHub Secrets as ACM_CERT_ARN
-
-# Step 4: Uncomment in k8s-deploy.yaml:
-# alb.ingress.kubernetes.io/certificate-arn: "${ACM_CERT_ARN}"
+aws acm list-certificates --region us-east-1 \
+  --query "CertificateSummaryList[?contains(DomainName,'opssightai.com')]" \
+  --output table
 ```
 
-### Point Your Domain
-```bash
-# After deployment, get the ALB DNS name:
-kubectl get ingress -n agentic-trading-platform
+#### DNS — point the subdomain to the ALB
+After first deployment, create a CNAME in your DNS provider:
 
-# Create a CNAME record in your DNS:
-# yourdomain.com → <ALB-DNS-name>
+```
+agentictradepulse.opssightai.com  CNAME  <ALB-hostname>
+```
+
+Get the ALB hostname:
+```bash
+kubectl get ingress agentic-trading-ingress \
+  -n agentic-trading-platform \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+```
+
+If your DNS is on Route 53, use an **Alias record** instead of CNAME:
+```bash
+# Get your hosted zone ID
+aws route53 list-hosted-zones \
+  --query "HostedZones[?Name=='opssightai.com.'].Id" --output text
+
+# Then create an Alias A record pointing to the ALB in the Route 53 console
 ```
 
 ---
@@ -120,7 +129,7 @@ Compatible with: Google Authenticator, Authy, 1Password, Bitwarden, and any RFC 
 ```bash
 # Login first, then:
 curl -H "Authorization: Bearer <access_token>" \
-  https://yourdomain.com/api/auth/mfa/setup
+  https://agentictradepulse.opssightai.com/api/auth/mfa/setup
 
 # Response:
 # {
@@ -267,7 +276,7 @@ There is **no localhost fallback** in production deployments.
 ```bash
 # Set in K8s secret:
 kubectl create secret generic trading-app-secrets \
-  --from-literal=cors-allowed-origins="https://yourdomain.com" \
+  --from-literal=cors-allowed-origins="https://agentictradepulse.opssightai.com" \
   ...
 ```
 

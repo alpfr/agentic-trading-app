@@ -53,7 +53,7 @@ spec:
         env:
         # CORS: comma-separated list of allowed frontend origins
         - name: CORS_ALLOWED_ORIGINS
-          value: "https://your-frontend-domain.com"
+          value: "https://agentictradepulse.opssightai.com"
 
         # --- All secrets via Kubernetes Secret (never plaintext values) ---
         - name: OPENAI_API_KEY
@@ -228,8 +228,9 @@ metadata:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     # ── TLS / HTTPS ────────────────────────────────────────────────────────
-    # Uncomment and set ACM_CERT_ARN after requesting your certificate.
-    # alb.ingress.kubernetes.io/certificate-arn: "${ACM_CERT_ARN}"
+    # ACM certificate ARN — auto-resolved in CI/CD from ACM by domain name.
+    # To override manually: set ACM_CERT_ARN in GitHub Secrets.
+    alb.ingress.kubernetes.io/certificate-arn: "${ACM_CERT_ARN}"
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
     # HTTP → HTTPS redirect
     alb.ingress.kubernetes.io/ssl-redirect: '443'
@@ -244,7 +245,8 @@ metadata:
       routing.http.drop_invalid_header_fields.enabled=true
 spec:
   rules:
-  - http:
+  - host: agentictradepulse.opssightai.com
+    http:
       paths:
       - path: /api
         pathType: Prefix

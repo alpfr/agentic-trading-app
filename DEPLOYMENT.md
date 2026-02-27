@@ -12,10 +12,22 @@ To deploy manually: push any commit to `master`.
 
 ---
 
-## Get the Live URL
+## Live URL
 
-1. Go to **Actions → Get App URL → Run workflow**
-2. Open the run summary — the ALB URL is printed there
+The app is accessible at:
+
+```
+https://agentictradepulse.opssightai.com
+```
+
+If you need the raw ALB hostname (e.g. to update DNS):
+```bash
+kubectl get ingress agentic-trading-ingress \
+  -n agentic-trading-platform \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+```
+
+Or run **Actions → Get App URL → Run workflow** in GitHub.
 
 ---
 
@@ -69,7 +81,7 @@ Namespace: agentic-trading-platform
 No redeploy needed — call the API:
 
 ```bash
-curl -X PUT https://<ALB_URL>/api/watchlist \
+curl -X PUT https://https://agentictradepulse.opssightai.com/api/watchlist \
   -H "X-API-Key: <APP_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{"watchlist": ["VTI","SCHD","QQQ","JNJ","PG","MSFT","NVDA","AAPL","AMZN"]}'
