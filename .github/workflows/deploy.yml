@@ -342,9 +342,13 @@ jobs:
       - name: Resolve ACM certificate ARN
         id: acm
         run: |
-          # Use pinned ARN (*.opssightai.com wildcard cert, us-east-1)
-          # Override by setting ACM_CERT_ARN in GitHub Secrets.
-          CERT_ARN="${{ secrets.ACM_CERT_ARN || 'arn:aws:acm:us-east-1:713220200108:certificate/7a263fe4-a8d5-47cc-a361-8b0a85a4c29e' }}"
+          # Pinned wildcard cert *.opssightai.com
+          # Override by setting ACM_CERT_ARN in GitHub Secrets
+          if [ -n "${{ secrets.ACM_CERT_ARN }}" ]; then
+            CERT_ARN="${{ secrets.ACM_CERT_ARN }}"
+          else
+            CERT_ARN="arn:aws:acm:us-east-1:713220200108:certificate/7a263fe4-a8d5-47cc-a361-8b0a85a4c29e"
+          fi
           echo "cert_arn=$CERT_ARN" >> $GITHUB_OUTPUT
           echo "Using cert: $CERT_ARN"
 
