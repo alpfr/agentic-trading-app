@@ -258,6 +258,14 @@ export default function App() {
           <SidebarButton active={activeTab === 'quote'}      icon={<Settings2 />}   label="Research"        onClick={() => setActiveTab('quote')} />
         </div>
 
+        <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
+          <a href="/guide.html" target="_blank" rel="noopener"
+            style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '8px', textDecoration: 'none', color: 'var(--text-muted)', fontSize: '13px', transition: 'background 0.15s' }}
+            onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.04)'}
+            onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+            <span style={{ fontSize: '16px' }}>📖</span> How to Use
+          </a>
+        </div>
         <div style={{ padding: '24px', borderTop: '1px solid var(--border)', background: 'rgba(255,255,255,0.01)' }}>
           <div style={{ padding: '12px', background: isLiveMode ? 'var(--danger-bg)' : 'rgba(79, 70, 229, 0.1)', border: `1px solid ${isLiveMode ? 'var(--danger)' : 'var(--primary)'}`, borderRadius: '12px', display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
             {isLiveMode ? <ShieldAlert color="var(--danger)" size={20} style={{ flexShrink: 0 }} /> : <Shield color="var(--primary)" size={20} style={{ flexShrink: 0 }} />}

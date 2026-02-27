@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>How to Use — Retirement Portfolio Advisor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=Outfit:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html{scroll-behavior:smooth;}
+
+:root{
+  --ink:#0c1118;
+  --ink2:#121b28;
+  --ink3:#1a2436;
+  --gold:#c8a44a;
+  --gold2:#e8cb7c;
+  --gold-dim:rgba(200,164,74,0.12);
+  --text:#dfe6f0;
+  --text-2:#8fa3bc;
+  --text-3:#4d637d;
+  --green:#50d890;
+  --amber:#f5b942;
+  --red:#f06870;
+  --blue:#6ca0dc;
+  --border:rgba(200,164,74,0.14);
+  --border2:rgba(255,255,255,0.06);
+}
+
+body{
+  background:var(--ink);
+  color:var(--text);
+  font-family:'Outfit',sans-serif;
+  font-weight:300;
+  line-height:1.75;
+  overflow-x:hidden;
+}
+
+/* grain overlay */
+body::after{
+  content:'';
+  position:fixed;
+  inset:0;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events:none;
+  z-index:999;
+  opacity:0.6;
+}
+
+/* ambient light */
+.ambient{
+  position:fixed;
+  border-radius:50%;
+  pointer-events:none;
+  filter:blur(100px);
+  z-index:0;
+}
+.ambient-1{width:600px;height:400px;background:rgba(200,164,74,0.07);top:-100px;left:-100px;}
+.ambient-2{width:500px;height:500px;background:rgba(80,160,220,0.05);bottom:0;right:-50px;}
+
+/* ── STICKY NAV ── */
+.nav{
+  position:sticky;
+  top:0;
+  z-index:100;
+  background:rgba(12,17,24,0.88);
+  backdrop-filter:blur(16px);
+  border-bottom:1px solid var(--border2);
+  padding:0 48px;
+}
+.nav-inner{
+  max-width:1100px;
+  margin:0 auto;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  height:56px;
+}
+.nav-logo{
+  font-family:'Cormorant Garamond',serif;
+  font-size:18px;
+  color:var(--gold);
+  letter-spacing:0.04em;
+  text-decoration:none;
+}
+.nav-links{
+  display:flex;
+  gap:28px;
+  list-style:none;
+}
+.nav-links a{
+  font-size:13px;
+  color:var(--text-2);
+  text-decoration:none;
+  transition:color 0.2s;
+}
+.nav-links a:hover{color:var(--gold2);}
+
+/* ── HERO ── */
+.hero{
+  position:relative;
+  z-index:1;
+  padding:120px 48px 80px;
+  max-width:1100px;
+  margin:0 auto;
+}
+.hero-eyebrow{
+  display:inline-flex;
+  align-items:center;
+  gap:10px;
+  font-size:11px;
+  font-weight:500;
+  letter-spacing:0.14em;
+  text-transform:uppercase;
+  color:var(--gold);
+  margin-bottom:28px;
+  opacity:0;
+  animation:rise 0.7s 0.1s ease forwards;
+}
+.hero-eyebrow::before{
+  content:'';
+  width:28px;
+  height:1px;
+  background:var(--gold);
+}
+.hero h1{
+  font-family:'Cormorant Garamond',serif;
+  font-size:clamp(48px,6vw,80px);
+  font-weight:600;
+  line-height:1.06;
+  color:var(--text);
+  margin-bottom:28px;
+  opacity:0;
+  animation:rise 0.7s 0.2s ease forwards;
+}
+.hero h1 span{color:var(--gold);font-style:italic;}
+.hero-sub{
+  font-size:18px;
+  color:var(--text-2);
+  max-width:560px;
+  margin-bottom:56px;
+  font-weight:300;
+  opacity:0;
+  animation:rise 0.7s 0.3s ease forwards;
+}
+.hero-chips{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  opacity:0;
+  animation:rise 0.7s 0.4s ease forwards;
+}
+.chip{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  background:var(--ink2);
+  border:1px solid var(--border2);
+  border-radius:100px;
+  padding:8px 18px;
+  font-size:13px;
+  color:var(--text-2);
+}
+.chip-dot{
+  width:7px;height:7px;
+  border-radius:50%;
+  flex-shrink:0;
+}
+
+/* ── CONTENT WRAP ── */
+.content{
+  position:relative;
+  z-index:1;
+  max-width:1100px;
+  margin:0 auto;
+  padding:0 48px;
+}
+
+/* ── SECTION HEADER ── */
+.sec-header{
+  display:flex;
+  align-items:baseline;
+  gap:20px;
+  margin-bottom:40px;
+  padding-top:80px;
+  border-top:1px solid var(--border2);
+}
+.sec-num{
+  font-family:'JetBrains Mono',monospace;
+  font-size:12px;
+  color:var(--gold);
+  letter-spacing:0.1em;
+  flex-shrink:0;
+}
+.sec-title{
+  font-family:'Cormorant Garamond',serif;
+  font-size:38px;
+  font-weight:600;
+  color:var(--text);
+  line-height:1.1;
+}
+.sec-body{
+  font-size:15px;
+  color:var(--text-2);
+  max-width:680px;
+  margin-bottom:40px;
+}
+
+/* ── STEP LIST ── */
+.steps{display:flex;flex-direction:column;}
+.step-row{
+  display:grid;
+  grid-template-columns:60px 1fr;
+  gap:24px;
+  padding:28px 0;
+  border-bottom:1px solid var(--border2);
+  align-items:start;
+  transition:background 0.2s;
+}
+.step-row:last-child{border-bottom:none;}
+.step-n{
+  font-family:'Cormorant Garamond',serif;
+  font-size:36px;
+  font-weight:600;
+  color:var(--gold-dim);
+  line-height:1;
+  background:
+    linear-gradient(135deg, var(--gold) 0%, transparent 60%);
+  -webkit-background-clip:text;
+  -webkit-text-fill-color:transparent;
+  background-clip:text;
+  user-select:none;
+}
+.step-content h3{
+  font-size:16px;
+  font-weight:500;
+  color:var(--text);
+  margin-bottom:8px;
+}
+.step-content p{
+  font-size:14px;
+  color:var(--text-2);
+  line-height:1.7;
+}
+.note{
+  margin-top:12px;
+  padding:10px 14px;
+  background:rgba(200,164,74,0.07);
+  border-left:2px solid var(--gold);
+  font-size:13px;
+  color:var(--gold2);
+  border-radius:0 6px 6px 0;
+}
+
+/* ── INTERACTIVE TAB GUIDE ── */
+.tab-guide{
+  display:grid;
+  grid-template-columns:220px 1fr;
+  border:1px solid var(--border2);
+  border-radius:14px;
+  overflow:hidden;
+  min-height:400px;
+}
+.tab-sidebar{
+  background:var(--ink2);
+  border-right:1px solid var(--border2);
+  padding:8px;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+.tab-btn{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:12px 14px;
+  border-radius:8px;
+  cursor:pointer;
+  font-size:13px;
+  font-weight:400;
+  color:var(--text-2);
+  background:none;
+  border:none;
+  text-align:left;
+  transition:all 0.15s;
+  width:100%;
+}
+.tab-btn:hover{background:rgba(255,255,255,0.04);color:var(--text);}
+.tab-btn.active{
+  background:var(--gold-dim);
+  color:var(--gold2);
+  font-weight:500;
+}
+.tab-btn .t-icon{font-size:16px;flex-shrink:0;}
+.tab-panel{
+  padding:32px 36px;
+  display:none;
+  animation:fadeIn 0.25s ease;
+}
+.tab-panel.active{display:block;}
+.tab-panel h3{
+  font-family:'Cormorant Garamond',serif;
+  font-size:26px;
+  font-weight:600;
+  color:var(--text);
+  margin-bottom:12px;
+}
+.tab-panel .tp-sub{
+  font-size:14px;
+  color:var(--text-2);
+  margin-bottom:24px;
+  max-width:500px;
+}
+.tp-items{display:flex;flex-direction:column;gap:12px;}
+.tp-item{
+  display:flex;
+  gap:12px;
+  align-items:flex-start;
+  padding:14px 16px;
+  background:var(--ink3);
+  border-radius:8px;
+  border:1px solid var(--border2);
+}
+.tp-bullet{
+  width:24px;height:24px;
+  border-radius:50%;
+  border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;
+  color:var(--gold);
+  font-family:'JetBrains Mono',monospace;
+  flex-shrink:0;
+  margin-top:2px;
+}
+.tp-text strong{font-weight:500;color:var(--text);display:block;margin-bottom:3px;font-size:13px;}
+.tp-text span{font-size:12px;color:var(--text-2);}
+
+/* ── HOLDINGS GRID ── */
+.holdings-grid{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:12px;
+}
+.holding-card{
+  background:var(--ink2);
+  border:1px solid var(--border2);
+  border-radius:10px;
+  padding:16px;
+  transition:border-color 0.2s;
+}
+.holding-card:hover{border-color:var(--border);}
+.h-ticker{
+  font-family:'JetBrains Mono',monospace;
+  font-size:20px;
+  font-weight:500;
+  color:var(--text);
+  margin-bottom:4px;
+}
+.h-name{font-size:11px;color:var(--text-3);margin-bottom:12px;}
+.h-badge{
+  display:inline-block;
+  font-size:10px;
+  font-weight:500;
+  letter-spacing:0.06em;
+  text-transform:uppercase;
+  padding:3px 10px;
+  border-radius:4px;
+}
+.badge-etf{background:rgba(108,160,220,0.15);color:var(--blue);}
+.badge-div{background:rgba(200,164,74,0.15);color:var(--gold2);}
+.badge-grow{background:rgba(80,216,144,0.15);color:var(--green);}
+.h-alloc{
+  margin-top:10px;
+  font-size:11px;
+  color:var(--text-3);
+}
+.h-alloc strong{color:var(--text-2);}
+
+/* ── RISK TABLE ── */
+.risk-tbl{
+  width:100%;
+  border-collapse:collapse;
+  font-size:14px;
+}
+.risk-tbl thead th{
+  padding:10px 16px;
+  font-size:11px;
+  font-weight:500;
+  text-transform:uppercase;
+  letter-spacing:0.08em;
+  color:var(--text-3);
+  text-align:left;
+  border-bottom:1px solid var(--border2);
+}
+.risk-tbl tbody td{
+  padding:14px 16px;
+  border-bottom:1px solid rgba(255,255,255,0.03);
+  vertical-align:top;
+}
+.risk-tbl tbody tr:last-child td{border-bottom:none;}
+.risk-tbl tbody td:first-child{color:var(--text);font-weight:400;}
+.risk-tbl td.limit{
+  font-family:'JetBrains Mono',monospace;
+  font-size:12px;
+  color:var(--gold);
+}
+.risk-tbl td.why{color:var(--text-2);font-size:13px;}
+.risk-tbl tbody tr:hover td{background:rgba(255,255,255,0.015);}
+
+/* ── ALERT TABLE ── */
+.alert-rows{display:flex;flex-direction:column;gap:8px;}
+.alert-row{
+  display:grid;
+  grid-template-columns:180px 100px 1fr;
+  gap:16px;
+  align-items:center;
+  padding:14px 18px;
+  border-radius:8px;
+  background:var(--ink2);
+  border:1px solid var(--border2);
+  font-size:13px;
+}
+.alert-row .al-type{font-weight:500;color:var(--text);}
+.sev{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  font-size:11px;
+  font-weight:600;
+  letter-spacing:0.06em;
+  padding:3px 10px;
+  border-radius:4px;
+}
+.sev-crit{background:rgba(240,104,112,0.15);color:var(--red);}
+.sev-warn{background:rgba(245,185,66,0.15);color:var(--amber);}
+.sev-act{background:rgba(108,160,220,0.15);color:var(--blue);}
+.al-action{color:var(--text-2);font-size:13px;}
+
+/* ── FAQ ── */
+.faq-list{display:flex;flex-direction:column;}
+.faq-item{
+  padding:24px 0;
+  border-bottom:1px solid var(--border2);
+  cursor:pointer;
+}
+.faq-item:last-child{border-bottom:none;}
+.faq-q{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:24px;
+}
+.faq-q span{
+  font-size:15px;
+  font-weight:400;
+  color:var(--text);
+  line-height:1.5;
+}
+.faq-toggle{
+  font-size:20px;
+  color:var(--gold);
+  flex-shrink:0;
+  transition:transform 0.25s;
+  user-select:none;
+}
+.faq-a{
+  font-size:14px;
+  color:var(--text-2);
+  line-height:1.7;
+  max-height:0;
+  overflow:hidden;
+  transition:max-height 0.3s ease, margin 0.2s;
+}
+.faq-item.open .faq-a{max-height:200px;margin-top:14px;}
+.faq-item.open .faq-toggle{transform:rotate(45deg);}
+
+/* ── CALLOUT ── */
+.callout{
+  display:flex;
+  gap:16px;
+  padding:20px 24px;
+  border-radius:10px;
+  margin:32px 0;
+}
+.callout-warn{background:rgba(245,185,66,0.07);border:1px solid rgba(245,185,66,0.2);}
+.callout-info{background:rgba(108,160,220,0.07);border:1px solid rgba(108,160,220,0.2);}
+.callout-icon{font-size:20px;flex-shrink:0;padding-top:2px;}
+.callout-body h4{font-size:14px;font-weight:500;color:var(--text);margin-bottom:6px;}
+.callout-body p{font-size:13px;color:var(--text-2);line-height:1.65;margin:0;}
+
+/* ── FOOTER ── */
+footer{
+  position:relative;z-index:1;
+  margin-top:120px;
+  padding:48px;
+  border-top:1px solid var(--border2);
+  text-align:center;
+  max-width:1100px;
+  margin-left:auto;
+  margin-right:auto;
+}
+footer p{font-size:13px;color:var(--text-3);line-height:1.9;}
+footer strong{color:var(--text-2);}
+
+/* ── ANIMATIONS ── */
+@keyframes rise{
+  from{opacity:0;transform:translateY(18px);}
+  to{opacity:1;transform:translateY(0);}
+}
+@keyframes fadeIn{
+  from{opacity:0;}to{opacity:1;}
+}
+
+/* ── SCROLL REVEAL ── */
+.reveal{
+  opacity:0;
+  transform:translateY(20px);
+  transition:opacity 0.55s ease, transform 0.55s ease;
+}
+.reveal.in{opacity:1;transform:translateY(0);}
+
+/* ── RESPONSIVE ── */
+@media(max-width:768px){
+  .nav-links{display:none;}
+  .hero{padding:80px 24px 48px;}
+  .content{padding:0 24px;}
+  .tab-guide{grid-template-columns:1fr;}
+  .tab-sidebar{flex-direction:row;flex-wrap:wrap;border-right:none;border-bottom:1px solid var(--border2);}
+  .holdings-grid{grid-template-columns:repeat(2,1fr);}
+  .alert-row{grid-template-columns:1fr;gap:6px;}
+}
+</style>
+</head>
+<body>
+
+<div class="ambient ambient-1"></div>
+<div class="ambient ambient-2"></div>
+
+<!-- NAV -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="#" class="nav-logo">Retirement Advisor</a>
+    <ul class="nav-links">
+      <li><a href="#start">Getting Started</a></li>
+      <li><a href="#tabs">The Tabs</a></li>
+      <li><a href="#portfolio">Your Portfolio</a></li>
+      <li><a href="#ai">How AI Works</a></li>
+      <li><a href="#guardrails">Guardrails</a></li>
+      <li><a href="#faq">FAQ</a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-eyebrow">User Guide · v3.0</div>
+  <h1>Your AI-Powered<br/><span>Retirement Advisor</span></h1>
+  <p class="hero-sub">A research companion that thinks long-term. Scans your portfolio daily, flags risks, and recommends rebalancing — all on paper, with guardrails the AI cannot bypass.</p>
+  <div class="hero-chips">
+    <div class="chip"><span class="chip-dot" style="background:#50d890;"></span>Paper trading only</div>
+    <div class="chip"><span class="chip-dot" style="background:#c8a44a;"></span>5–10 yr horizon</div>
+    <div class="chip"><span class="chip-dot" style="background:#6ca0dc;"></span>Daily AI scan at 10:00 ET</div>
+    <div class="chip"><span class="chip-dot" style="background:#f5b942;"></span>7 risk guardrails</div>
+  </div>
+</div>
+
+<!-- GETTING STARTED -->
+<div class="content">
+  <div id="start" class="reveal">
+    <div class="sec-header">
+      <span class="sec-num">01</span>
+      <h2 class="sec-title">Getting Started</h2>
+    </div>
+    <p class="sec-body">You're already deployed. Here's how to get oriented in your first 10 minutes with the app.</p>
+
+    <div class="callout callout-warn">
+      <div class="callout-icon">⚠️</div>
+      <div class="callout-body">
+        <h4>This is paper trading — not financial advice</h4>
+        <p>All orders are simulated. No real money ever moves. Use this to build research conviction — keep your actual retirement savings in a 401(k), IRA, or Roth IRA, and consult a qualified financial advisor before making real investment decisions.</p>
+      </div>
+    </div>
+
+    <div class="steps">
+      <div class="step-row">
+        <div class="step-n">01</div>
+        <div class="step-content">
+          <h3>Open the app</h3>
+          <p>Go to GitHub Actions → <strong>Get App URL</strong> → Run workflow. Your ALB URL is printed in the summary. Bookmark it.</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-n">02</div>
+        <div class="step-content">
+          <h3>Check the Watchlist tab</h3>
+          <p>Click <strong>Watchlist</strong> in the left sidebar. You'll see 8 live price cards — your default retirement portfolio. Each shows current price, daily change %, position vs SMA, and dividend yield.</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-n">03</div>
+        <div class="step-content">
+          <h3>Trigger your first AI analysis</h3>
+          <p>Click <strong>Analyze</strong> on any ticker card. The full pipeline runs: market data → fundamentals → GPT-4o-mini evaluation → risk gate check → paper order if approved. Takes ~15 seconds.</p>
+          <div class="note">💡 Click <strong>Scan All Now</strong> at the top to analyze all 8 tickers at once.</div>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-n">04</div>
+        <div class="step-content">
+          <h3>Read the AI Advisor output</h3>
+          <p>Go to <strong>AI Advisor</strong> in the sidebar. Each card shows: recommendation (BUY / HOLD / SELL / REDUCE), confidence score, primary thesis, and the specific risk that could make it wrong.</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-n">05</div>
+        <div class="step-content">
+          <h3>Check your rebalance status</h3>
+          <p>Click <strong>Rebalancing</strong>. See how your ETF / Dividend / Growth split compares to targets. If any category has drifted more than 5%, the engine tells you exactly what to add or trim.</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-n">06</div>
+        <div class="step-content">
+          <h3>From here — it runs itself</h3>
+          <p>Every trading day at 10:00 AM ET, the system scans all 8 holdings automatically. Every Monday it runs a rebalance check. Alerts appear in real-time. You just review and decide.</p>
+          <div class="note">✅ You don't need to keep the app open. The server scans in the background.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- THE 8 TABS -->
+  <div id="tabs" class="reveal" style="margin-top:0;">
+    <div class="sec-header">
+      <span class="sec-num">02</span>
+      <h2 class="sec-title">The 8 Tabs</h2>
+    </div>
+    <p class="sec-body">Everything in the app lives in the left sidebar. Click a tab below to see what it does.</p>
+
+    <div class="tab-guide">
+      <div class="tab-sidebar">
+        <button class="tab-btn active" onclick="switchTab(this,'t-portfolio')"><span class="t-icon">📊</span> Portfolio</button>
+        <button class="tab-btn" onclick="switchTab(this,'t-watchlist')"><span class="t-icon">⭐</span> Watchlist</button>
+        <button class="tab-btn" onclick="switchTab(this,'t-rebalance')"><span class="t-icon">⚖️</span> Rebalancing</button>
+        <button class="tab-btn" onclick="switchTab(this,'t-dividends')"><span class="t-icon">💰</span> Dividends</button>
+        <button class="tab-btn" onclick="switchTab(this,'t-alerts')"><span class="t-icon">🔔</span> Alerts</button>
+        <button class="tab-btn" onclick="switchTab(this,'t-advisor')"><span class="t-icon">🧠</span> AI Advisor</button>
+        <button class="tab-btn" onclick="switchTab(this,'t-audit')"><span class="t-icon">📋</span> Audit Log</button>
+        <button class="tab-btn" onclick="switchTab(this,'t-research')"><span class="t-icon">🔍</span> Research</button>
+      </div>
+      <div style="overflow:hidden;">
+        <div id="t-portfolio" class="tab-panel active">
+          <h3>Portfolio</h3>
+          <p class="tp-sub">Your open paper positions with live PnL and risk status. The home base view.</p>
+          <div class="tp-items">
+            <div class="tp-item"><div class="tp-bullet">1</div><div class="tp-text"><strong>Open positions table</strong><span>Entry price, current price, shares, unrealized PnL% — updated every agent scan and every 5 minutes via broker reconciliation.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">2</div><div class="tp-text"><strong>Total equity</strong><span>Live account value pulled from your Alpaca paper account.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">3</div><div class="tp-text"><strong>Risk Guardrails panel</strong><span>Shows the 4 hard limits active on your account: max position size, trailing stop threshold, min hold period, and confidence gate.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">4</div><div class="tp-text"><strong>Analyze ticker</strong><span>Type any ticker and click "Run Cycle" to trigger a manual analysis right from the header.</span></div></div>
+          </div>
+        </div>
+        <div id="t-watchlist" class="tab-panel">
+          <h3>Watchlist</h3>
+          <p class="tp-sub">Live cards for all 8 holdings with the controls to scan and manage them.</p>
+          <div class="tp-items">
+            <div class="tp-item"><div class="tp-bullet">1</div><div class="tp-text"><strong>Price cards</strong><span>Live price, daily % change, % above/below SMA-20, and dividend yield for each holding.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">2</div><div class="tp-text"><strong>Open position badge</strong><span>If you hold a paper position in a ticker, a badge shows shares, entry price, and current PnL%.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">3</div><div class="tp-text"><strong>Analyze button</strong><span>Triggers the full AI pipeline for that specific ticker. Results appear in AI Advisor.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">4</div><div class="tp-text"><strong>Scan All Now</strong><span>Queues all 8 tickers for analysis simultaneously. Allow 2–3 minutes to complete.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">5</div><div class="tp-text"><strong>Active Config panel</strong><span>Shows your current risk parameters: horizon, trailing stop, min hold, rebalance drift trigger.</span></div></div>
+          </div>
+        </div>
+        <div id="t-rebalance" class="tab-panel">
+          <h3>Rebalancing</h3>
+          <p class="tp-sub">Compare your actual allocation vs targets. Know exactly what to add or trim.</p>
+          <div class="tp-items">
+            <div class="tp-item"><div class="tp-bullet">1</div><div class="tp-text"><strong>Allocation vs targets</strong><span>Bar chart showing ETF / Dividend / Growth actual % vs target (40% / 25% / 35%).</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">2</div><div class="tp-text"><strong>BUY MORE cards</strong><span>Underweight categories with dollar amount to invest and which specific tickers to add to.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">3</div><div class="tp-text"><strong>TRIM cards</strong><span>Overweight categories with excess dollar amount and which tickers to reduce.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">4</div><div class="tp-text"><strong>Refresh button</strong><span>Recalculates drift on demand using current position prices and account value.</span></div></div>
+          </div>
+        </div>
+        <div id="t-dividends" class="tab-panel">
+          <h3>Dividends</h3>
+          <p class="tp-sub">Project your income stream from current paper holdings.</p>
+          <div class="tp-items">
+            <div class="tp-item"><div class="tp-bullet">1</div><div class="tp-text"><strong>Annual income estimate</strong><span>Total projected annual dividend income from your current paper positions at current yields.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">2</div><div class="tp-text"><strong>Per-ticker breakdown</strong><span>Yield %, payout ratio, dividend growth rate, and annual income per holding.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">3</div><div class="tp-text"><strong>Payout health indicator</strong><span>Green (&lt;60%), yellow (60–80%), red (&gt;80%). Red means the dividend may be at risk.</span></div></div>
+          </div>
+        </div>
+        <div id="t-alerts" class="tab-panel">
+          <h3>Alerts</h3>
+          <p class="tp-sub">Real-time events that need your attention. Sorted by severity.</p>
+          <div class="tp-items">
+            <div class="tp-item"><div class="tp-bullet">1</div><div class="tp-text"><strong>Critical alerts</strong><span>Price drop &gt;10% or position down &gt;15% from entry. Review the thesis immediately.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">2</div><div class="tp-text"><strong>Warning alerts</strong><span>Price drop 5–10% or dividend payout ratio &gt;85%. Monitor closely.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">3</div><div class="tp-text"><strong>Action alerts</strong><span>Rebalance drift &gt;5% or 52-week drawdown &gt;20% (potential DCA opportunity).</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">4</div><div class="tp-text"><strong>Mark as read</strong><span>Click any alert to mark it read and clear it from your unread count.</span></div></div>
+          </div>
+        </div>
+        <div id="t-advisor" class="tab-panel">
+          <h3>AI Advisor</h3>
+          <p class="tp-sub">Every AI recommendation ever made, with full rationale. Your research journal.</p>
+          <div class="tp-items">
+            <div class="tp-item"><div class="tp-bullet">1</div><div class="tp-text"><strong>Action badge</strong><span>BUY (green), HOLD (amber), SELL (red), REDUCE (orange) — color coded for instant scan.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">2</div><div class="tp-text"><strong>Confidence score</strong><span>0–100%. The AI requires ≥60% to trigger any action. Low confidence = HOLD.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">3</div><div class="tp-text"><strong>Rationale</strong><span>2–3 sentences: primary thesis (why this asset now) + key risk (what could make it wrong).</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">4</div><div class="tp-text"><strong>Use it as a research diary</strong><span>Track how recommendations evolve over time. Compare AI conviction to your own research.</span></div></div>
+          </div>
+        </div>
+        <div id="t-audit" class="tab-panel">
+          <h3>Audit Log</h3>
+          <p class="tp-sub">The immutable record of every decision the system ever made.</p>
+          <div class="tp-items">
+            <div class="tp-item"><div class="tp-bullet">1</div><div class="tp-text"><strong>APPROVED events</strong><span>Signal passed all 7 risk gates. Shows approved quantity and limit price.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">2</div><div class="tp-text"><strong>REJECTED events</strong><span>Which gate failed and why — confidence too low, concentration too high, min hold not met, etc.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">3</div><div class="tp-text"><strong>FILLED events</strong><span>Alpaca paper order confirmed. Position is now live in your portfolio.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">4</div><div class="tp-text"><strong>REBALANCE events</strong><span>Weekly Monday rebalance check results logged with category-by-category drift.</span></div></div>
+          </div>
+        </div>
+        <div id="t-research" class="tab-panel">
+          <h3>Research</h3>
+          <p class="tp-sub">On-demand quote and fundamentals for any ticker — including ones not in your watchlist.</p>
+          <div class="tp-items">
+            <div class="tp-item"><div class="tp-bullet">1</div><div class="tp-text"><strong>Live quote</strong><span>Current price, daily change, 52-week range, volume, market cap.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">2</div><div class="tp-text"><strong>Fundamentals</strong><span>P/E, P/B, dividend yield, payout ratio, debt/equity, revenue trend, free cash flow.</span></div></div>
+            <div class="tp-item"><div class="tp-bullet">3</div><div class="tp-text"><strong>Before you add to watchlist</strong><span>Research any ticker here first. Make sure it's NYSE/Nasdaq listed before adding it.</span></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- YOUR PORTFOLIO -->
+  <div id="portfolio" class="reveal" style="margin-top:0;">
+    <div class="sec-header">
+      <span class="sec-num">03</span>
+      <h2 class="sec-title">Your Default Portfolio</h2>
+    </div>
+    <p class="sec-body">Pre-built for a 5–10 year retirement horizon. Balanced across three categories with target allocations.</p>
+
+    <div class="holdings-grid">
+      <div class="holding-card">
+        <div class="h-ticker">VTI</div>
+        <div class="h-name">Vanguard Total Market</div>
+        <span class="h-badge badge-etf">ETF</span>
+        <div class="h-alloc">Target: <strong>40% combined</strong></div>
+      </div>
+      <div class="holding-card">
+        <div class="h-ticker">SCHD</div>
+        <div class="h-name">Schwab Dividend ETF</div>
+        <span class="h-badge badge-etf">ETF</span>
+        <div class="h-alloc">Target: <strong>40% combined</strong></div>
+      </div>
+      <div class="holding-card">
+        <div class="h-ticker">QQQ</div>
+        <div class="h-name">Invesco Nasdaq-100</div>
+        <span class="h-badge badge-etf">ETF</span>
+        <div class="h-alloc">Target: <strong>40% combined</strong></div>
+      </div>
+      <div class="holding-card">
+        <div class="h-ticker">JNJ</div>
+        <div class="h-name">Johnson &amp; Johnson</div>
+        <span class="h-badge badge-div">Dividend</span>
+        <div class="h-alloc">Target: <strong>25% combined</strong></div>
+      </div>
+      <div class="holding-card">
+        <div class="h-ticker">PG</div>
+        <div class="h-name">Procter &amp; Gamble</div>
+        <span class="h-badge badge-div">Dividend</span>
+        <div class="h-alloc">Target: <strong>25% combined</strong></div>
+      </div>
+      <div class="holding-card">
+        <div class="h-ticker">MSFT</div>
+        <div class="h-name">Microsoft</div>
+        <span class="h-badge badge-grow">Growth</span>
+        <div class="h-alloc">Target: <strong>35% combined</strong></div>
+      </div>
+      <div class="holding-card">
+        <div class="h-ticker">NVDA</div>
+        <div class="h-name">Nvidia</div>
+        <span class="h-badge badge-grow">Growth</span>
+        <div class="h-alloc">Target: <strong>35% combined</strong></div>
+      </div>
+      <div class="holding-card">
+        <div class="h-ticker">AAPL</div>
+        <div class="h-name">Apple</div>
+        <span class="h-badge badge-grow">Growth</span>
+        <div class="h-alloc">Target: <strong>35% combined</strong></div>
+      </div>
+    </div>
+
+    <div class="callout callout-info" style="margin-top:28px;">
+      <div class="callout-icon">ℹ️</div>
+      <div class="callout-body">
+        <h4>Customizing your watchlist</h4>
+        <p>Add tickers via the Watchlist tab settings or the API. Only NYSE/Nasdaq-listed securities are supported — OTC stocks will be rejected by Alpaca. Keep it to 12–15 tickers max for meaningful daily analysis.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- HOW THE AI WORKS -->
+  <div id="ai" class="reveal" style="margin-top:0;">
+    <div class="sec-header">
+      <span class="sec-num">04</span>
+      <h2 class="sec-title">How the AI Evaluates Holdings</h2>
+    </div>
+    <p class="sec-body">The AI doesn't trade on charts or momentum. It evaluates each asset like a long-term investor — as a business you plan to own for years.</p>
+
+    <div class="steps">
+      <div class="step-row">
+        <div class="step-n">①</div>
+        <div class="step-content">
+          <h3>Market data fetch</h3>
+          <p>Price, SMA-20, SMA-50, ATR, and volume pulled from Yahoo Finance. Used for valuation context — not the trade signal itself. Cached 60 seconds.</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-n">②</div>
+        <div class="step-content">
+          <h3>Fundamentals fetch</h3>
+          <p>P/E, P/B, dividend yield, payout ratio, 5-year dividend growth, revenue trend, debt/equity, and free cash flow. Cached 6 hours — fundamentals don't change minute-to-minute.</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-n">③</div>
+        <div class="step-content">
+          <h3>Category-aware AI evaluation</h3>
+          <p>GPT-4o-mini applies different criteria depending on the ticker's category:</p>
+          <div class="note" style="color:var(--text-2);">
+            <strong style="color:var(--blue);">ETFs</strong> — Is the price below the 52-week mean? Good DCA entry.<br/>
+            <strong style="color:var(--gold2);">Dividend</strong> — Is the yield above the 5-year average? Is the payout ratio &lt;60%?<br/>
+            <strong style="color:var(--green);">Growth</strong> — Is revenue accelerating? Is the PEG ratio reasonable vs sector average?
+          </div>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-n">④</div>
+        <div class="step-content">
+          <h3>Signal output</h3>
+          <p>The AI outputs <strong>BUY</strong>, <strong>HOLD</strong>, <strong>SELL</strong>, or <strong>REDUCE</strong> with a confidence score (0–100%) and a 2–3 sentence rationale covering the primary thesis and key invalidation risk.</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-n">⑤</div>
+        <div class="step-content">
+          <h3>Risk gate check (before any order)</h3>
+          <p>The signal passes through 7 deterministic Python gates. If any fails, the order is blocked and the reason is logged to the Audit Log. The AI has zero ability to bypass this layer.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RISK GUARDRAILS -->
+  <div id="guardrails" class="reveal" style="margin-top:0;">
+    <div class="sec-header">
+      <span class="sec-num">05</span>
+      <h2 class="sec-title">The 7 Risk Guardrails</h2>
+    </div>
+    <p class="sec-body">These gates are pure Python math — enforced in order, before every order. The AI recommendation is rejected the moment any gate fails.</p>
+
+    <table class="risk-tbl">
+      <thead>
+        <tr><th>Gate</th><th>Limit</th><th>Why it exists</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Confidence threshold</td><td class="limit">≥ 60%</td><td class="why">Only act on high-conviction signals. Weak signals are indistinguishable from noise for long-term investing.</td></tr>
+        <tr><td>Portfolio drawdown</td><td class="limit">&lt; 20% from peak</td><td class="why">Pauses all new buys during major corrections. Forces a review of overall allocation before adding more risk.</td></tr>
+        <tr><td>Minimum hold period</td><td class="limit">≥ 30 days</td><td class="why">Prevents churn and protects against short-term capital gains tax treatment.</td></tr>
+        <tr><td>Concentration cap</td><td class="limit">≤ 10% per holding</td><td class="why">No single stock can dominate the portfolio, regardless of how convinced the AI is.</td></tr>
+        <tr><td>Trailing stop alert</td><td class="limit">-15% from entry</td><td class="why">Soft alert only — never auto-sells. Prompts a thesis review. Panic-selling on volatility destroys long-term returns.</td></tr>
+        <tr><td>Position sizing</td><td class="limit">2% per trade</td><td class="why">Each new buy uses 2% of total equity. Gradual, controlled allocation — never all-in.</td></tr>
+        <tr><td>System halt</td><td class="limit">Manual</td><td class="why">Emergency kill switch. Halts all activity instantly.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ALERTS -->
+  <div class="reveal" style="margin-top:0;">
+    <div class="sec-header">
+      <span class="sec-num">06</span>
+      <h2 class="sec-title">Understanding Alerts</h2>
+    </div>
+    <p class="sec-body">Alerts are informational — they never trigger automatic sells. They tell you when something needs a human review.</p>
+
+    <div class="alert-rows">
+      <div class="alert-row">
+        <div class="al-type">Price Drop &gt;10%</div>
+        <span class="sev sev-crit">⬤ Critical</span>
+        <div class="al-action">Check news immediately. Is there a fundamental reason? If earnings or guidance changed, review thesis. If macro noise, may be a buy opportunity.</div>
+      </div>
+      <div class="alert-row">
+        <div class="al-type">Trailing Stop −15%</div>
+        <span class="sev sev-crit">⬤ Critical</span>
+        <div class="al-action">Ask: "Has the business fundamentally changed?" If no — hold. If yes — consider reducing in the AI Advisor tab.</div>
+      </div>
+      <div class="alert-row">
+        <div class="al-type">Price Drop 5–10%</div>
+        <span class="sev sev-warn">⬤ Warning</span>
+        <div class="al-action">Monitor. Check if company-specific or broad market. Normal volatility for quality holdings.</div>
+      </div>
+      <div class="alert-row">
+        <div class="al-type">Payout Ratio &gt;85%</div>
+        <span class="sev sev-warn">⬤ Warning</span>
+        <div class="al-action">Dividend may be at risk if earnings decline. Watch next 1–2 quarterly reports closely.</div>
+      </div>
+      <div class="alert-row">
+        <div class="al-type">Rebalance Drift &gt;5%</div>
+        <span class="sev sev-act">⬤ Action</span>
+        <div class="al-action">Go to the Rebalancing tab. Review recommendations. No urgency — rebalance at your discretion.</div>
+      </div>
+      <div class="alert-row">
+        <div class="al-type">52-Wk Drawdown &gt;20%</div>
+        <span class="sev sev-act">⬤ Action</span>
+        <div class="al-action">Quality holding significantly below recent highs. Consider this a potential DCA opportunity — run an Analyze first.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FAQ -->
+  <div id="faq" class="reveal" style="margin-top:0;">
+    <div class="sec-header">
+      <span class="sec-num">07</span>
+      <h2 class="sec-title">FAQ</h2>
+    </div>
+
+    <div class="faq-list">
+      <div class="faq-item" onclick="toggleFaq(this)">
+        <div class="faq-q"><span>Can the AI lose me money?</span><span class="faq-toggle">+</span></div>
+        <div class="faq-a">The app operates on paper trading only — no real money ever moves. The AI's paper recommendations have zero impact on your real finances. Use them to build research conviction before making real investment decisions independently.</div>
+      </div>
+      <div class="faq-item" onclick="toggleFaq(this)">
+        <div class="faq-q"><span>Why does the AI keep saying HOLD?</span><span class="faq-toggle">+</span></div>
+        <div class="faq-a">HOLD is often correct for quality long-term holdings. The AI requires ≥60% confidence to recommend BUY or SELL — if signals are mixed, HOLD is the prudent default. This is by design: over-trading destroys long-term returns. A week of HOLD signals on great businesses is a feature, not a bug.</div>
+      </div>
+      <div class="faq-item" onclick="toggleFaq(this)">
+        <div class="faq-q"><span>Do I need to keep the app open for scans to run?</span><span class="faq-toggle">+</span></div>
+        <div class="faq-a">No. The RetirementScheduler runs on the EKS server in the background. Scans fire at 10:00 AM ET every trading day and rebalance checks run every Monday — whether you have the app open or not. Just check back when you want to see recommendations.</div>
+      </div>
+      <div class="faq-item" onclick="toggleFaq(this)">
+        <div class="faq-q"><span>Can I add my own stocks?</span><span class="faq-toggle">+</span></div>
+        <div class="faq-a">Yes — use the Research tab to analyze any ticker first, then update your watchlist via the Watchlist tab settings or the PUT /api/watchlist endpoint. Stick to NYSE or Nasdaq-listed securities. Avoid adding more than 12–15 tickers total to keep daily analysis focused and meaningful.</div>
+      </div>
+      <div class="faq-item" onclick="toggleFaq(this)">
+        <div class="faq-q"><span>Why does my portfolio reset after a restart?</span><span class="faq-toggle">+</span></div>
+        <div class="faq-a">The current setup uses an in-pod SQLite database that resets when the Kubernetes pod restarts. This is a known limitation. After any restart, trigger a Scan All to repopulate market data. A PostgreSQL RDS upgrade would make data persistent across restarts.</div>
+      </div>
+      <div class="faq-item" onclick="toggleFaq(this)">
+        <div class="faq-q"><span>How do I use this alongside my real retirement account?</span><span class="faq-toggle">+</span></div>
+        <div class="faq-a">Think of it as a research journal. Watch how paper recommendations perform over months. Read the AI rationale and internalize the analytical framework. When a paper recommendation aligns with your own independent research and your real account's needs — then consider it alongside advice from a qualified financial advisor.</div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <p><strong>Retirement Portfolio Advisor</strong> &nbsp;·&nbsp; v3.0.0 &nbsp;·&nbsp; Paper Trading Only</p>
+    <p>AWS EKS &nbsp;·&nbsp; FastAPI &nbsp;·&nbsp; React &nbsp;·&nbsp; GPT-4o-mini &nbsp;·&nbsp; Alpaca Paper API</p>
+    <p style="margin-top:20px;font-size:12px;max-width:600px;margin-left:auto;margin-right:auto;">This application does not provide financial advice and is not a substitute for a qualified financial advisor. Always consult a professional before making retirement investment decisions. Past paper performance does not predict future real returns.</p>
+  </footer>
+</div>
+
+<script>
+function switchTab(btn, id) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById(id).classList.add('active');
+}
+
+function toggleFaq(el) {
+  el.classList.toggle('open');
+}
+
+// Scroll reveal
+const revealEls = document.querySelectorAll('.reveal');
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => { if(e.isIntersecting) e.target.classList.add('in'); });
+}, { threshold: 0.06 });
+revealEls.forEach(el => obs.observe(el));
+</script>
+</body>
+</html>
