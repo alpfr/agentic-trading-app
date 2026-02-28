@@ -1,0 +1,67 @@
+# CloudWatch Log Group — Agentic Trading Platform
+# SOC 2 CC7.2: Monitoring of system components
+# Retention: 90 days per NIST 800-53 AU-11
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudWatch Log Groups for Agentic Trading Platform — SOC 2 compliant'
+
+Parameters:
+  RetentionDays:
+    Type: Number
+    Default: 90
+    AllowedValues: [30, 60, 90, 120, 180, 365]
+    Description: Log retention in days (90 days = NIST 800-53 AU-11 minimum)
+
+Resources:
+  ApplicationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /agentic-trading/eks/application
+      RetentionInDays: !Ref RetentionDays
+      Tags:
+        - Key: app
+          Value: agentic-trading
+        - Key: env
+          Value: production
+        - Key: soc2
+          Value: 'true'
+        - Key: compliance
+          Value: 'NIST-800-53-AU-11'
+
+  AuditLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /agentic-trading/eks/audit
+      RetentionInDays: 365
+      Tags:
+        - Key: app
+          Value: agentic-trading
+        - Key: env
+          Value: production
+        - Key: soc2
+          Value: 'true'
+        - Key: purpose
+          Value: security-audit
+
+  AuthLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /agentic-trading/eks/auth
+      RetentionInDays: 365
+      Tags:
+        - Key: app
+          Value: agentic-trading
+        - Key: soc2
+          Value: 'true'
+        - Key: purpose
+          Value: authentication-audit
+
+Outputs:
+  ApplicationLogGroupArn:
+    Value: !GetAtt ApplicationLogGroup.Arn
+    Export:
+      Name: agentic-trading-app-log-group-arn
+
+  AuditLogGroupArn:
+    Value: !GetAtt AuditLogGroup.Arn
+    Export:
+      Name: agentic-trading-audit-log-group-arn
