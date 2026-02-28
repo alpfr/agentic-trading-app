@@ -617,25 +617,43 @@ jobs:
           REDISEOF
           echo "✅ Redis deployed"
 
-          # Generate and store Redis password if not already set
-          EXISTING=$(kubectl get secret trading-app-secrets -n agentic-trading-platform \
-            -o jsonpath='{.data.redis-password}' 2>/dev/null | base64 -d)
-          if [ -z "$EXISTING" ]; then
-            REDIS_PASS=$(openssl rand -hex 24)
-            kubectl patch secret trading-app-secrets -n agentic-trading-platform \
-              --type='json' \
-              -p="[{\"op\":\"add\",\"path\":\"/data/redis-password\",\"value\":\"$(echo -n $REDIS_PASS | base64)\"}]"
-            echo "✅ Redis password stored in K8s secret"
+          # Use GitHub Secret if set, otherwise preserve existing or generate new
+          if [ -n "${{ secrets.REDIS_PASSWORD }}" ]; then
+            REDIS_PASS="${{ secrets.REDIS_PASSWORD }}"
+            echo "✅ Using Redis password from GitHub Secrets"
           else
-            REDIS_PASS="$EXISTING"
-            echo "ℹ️  Redis password already exists"
+            EXISTING=$(kubectl get secret trading-app-secrets -n agentic-trading-platform \
+              -o jsonpath='{.data.redis-password}' 2>/dev/null | base64 -d)
+            if [ -n "$EXISTING" ]; then
+              REDIS_PASS="$EXISTING"
+              echo "ℹ️  Using existing Redis password from K8s secret"
+            else
+              REDIS_PASS=$(openssl rand -hex 24)
+              echo "✅ Generated new Redis password"
+            fi
           fi
 
-          # Build REDIS_URL and store it
-          REDIS_URL="redis://:${REDIS_PASS}@redis.agentic-trading-platform.svc.cluster.local:6379/0"
           kubectl patch secret trading-app-secrets -n agentic-trading-platform \
             --type='json' \
-            -p="[{\"op\":\"add\",\"path\":\"/data/redis-url\",\"value\":\"$(echo -n $REDIS_URL | base64)\"}]"
+            -p="[{\"op\":\"add\",\"path\":\"/data/redis-password\",\"value\":\"$(echo -n $REDIS_PASS | base64)\"}]" \
+            2>/dev/null || kubectl patch secret trading-app-secrets -n agentic-trading-platform \
+            --type='json' \
+            -p="[{\"op\":\"replace\",\"path\":\"/data/redis-password\",\"value\":\"$(echo -n $REDIS_PASS | base64)\"}]"
+
+          # Build and store REDIS_URL (prefer GitHub Secret)
+          if [ -n "${{ secrets.REDIS_URL }}" ]; then
+            REDIS_URL="${{ secrets.REDIS_URL }}"
+            echo "✅ Using REDIS_URL from GitHub Secrets"
+          else
+            REDIS_URL="redis://:${REDIS_PASS}@redis.agentic-trading-platform.svc.cluster.local:6379/0"
+          fi
+
+          kubectl patch secret trading-app-secrets -n agentic-trading-platform \
+            --type='json' \
+            -p="[{\"op\":\"add\",\"path\":\"/data/redis-url\",\"value\":\"$(echo -n $REDIS_URL | base64)\"}]" \
+            2>/dev/null || kubectl patch secret trading-app-secrets -n agentic-trading-platform \
+            --type='json' \
+            -p="[{\"op\":\"replace\",\"path\":\"/data/redis-url\",\"value\":\"$(echo -n $REDIS_URL | base64)\"}]"
           echo "✅ REDIS_URL stored in K8s secret"
 
 
