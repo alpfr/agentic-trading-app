@@ -426,6 +426,27 @@ jobs:
                       secretKeyRef:
                         name: trading-app-secrets
                         key: database-url
+                  - name: JWT_SECRET
+                    valueFrom:
+                      secretKeyRef:
+                        name: trading-app-secrets
+                        key: jwt-secret
+                  - name: ADMIN_USERNAME
+                    valueFrom:
+                      secretKeyRef:
+                        name: trading-app-secrets
+                        key: admin-username
+                  - name: ADMIN_PASSWORD_HASH
+                    valueFrom:
+                      secretKeyRef:
+                        name: trading-app-secrets
+                        key: admin-password-hash
+                  - name: ADMIN_TOTP_SECRET
+                    valueFrom:
+                      secretKeyRef:
+                        name: trading-app-secrets
+                        key: admin-totp-secret
+                        optional: true
                   livenessProbe:
                     httpGet:
                       path: /health
