@@ -48,14 +48,63 @@ from trading_interface.security.audit_log import audit_from_request
 logger = logging.getLogger("AuthRouter")
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-# ── In-memory MFA session store (use Redis in multi-replica prod) ──────────
-# Maps session_token → { username, expires_at }
-_MFA_SESSIONS: dict = {}
-_MFA_SESSION_TTL_SECONDS = 300   # 5-minute window to enter TOTP code
+# ── MFA session store — Redis-backed with in-memory fallback ──────────────
+_MFA_SESSIONS_FALLBACK: dict = {}   # used only if Redis unavailable
+_MFA_SESSION_TTL_SECONDS = 300      # 5-minute window to enter TOTP code
 
 def _mfa_enabled() -> bool:
     """Check at request time so secret updates take effect after restart."""
     return bool(os.getenv("ADMIN_TOTP_SECRET", ""))
+
+def _mfa_session_set(token: str, username: str) -> None:
+    """Store MFA session in Redis (preferred) or in-memory fallback."""
+    import json as _json
+    from trading_interface.security import _get_redis
+    r = _get_redis()
+    if r:
+        try:
+            r.setex(f"mfa_session:{token}", _MFA_SESSION_TTL_SECONDS,
+                    _json.dumps({"username": username}))
+            return
+        except Exception as e:
+            logger.warning(f"AUTH | redis_mfa_session_write_failed | {e}")
+    import time
+    _MFA_SESSIONS_FALLBACK[token] = {
+        "username": username,
+        "expires_at": time.time() + _MFA_SESSION_TTL_SECONDS,
+    }
+
+def _mfa_session_get(token: str) -> dict | None:
+    """Get MFA session from Redis or in-memory fallback."""
+    import json as _json, time
+    from trading_interface.security import _get_redis
+    r = _get_redis()
+    if r:
+        try:
+            val = r.get(f"mfa_session:{token}")
+            if val:
+                data = _json.loads(val)
+                return {"username": data["username"], "expires_at": None}  # Redis TTL handles expiry
+            return None
+        except Exception as e:
+            logger.warning(f"AUTH | redis_mfa_session_read_failed | {e}")
+    session = _MFA_SESSIONS_FALLBACK.get(token)
+    if session and time.time() > session["expires_at"]:
+        del _MFA_SESSIONS_FALLBACK[token]
+        return None
+    return session
+
+def _mfa_session_delete(token: str) -> None:
+    """Delete MFA session from Redis or in-memory fallback."""
+    from trading_interface.security import _get_redis
+    r = _get_redis()
+    if r:
+        try:
+            r.delete(f"mfa_session:{token}")
+            return
+        except Exception as e:
+            logger.warning(f"AUTH | redis_mfa_session_delete_failed | {e}")
+    _MFA_SESSIONS_FALLBACK.pop(token, None)
 
 
 # ── Request/Response models ────────────────────────────────────────────────
@@ -91,8 +140,6 @@ async def login(body: LoginRequest, request: Request):
     Step 1 of auth flow.
     Returns MFARequiredResponse if MFA is enabled, else TokenResponse.
     """
-    import secrets as _secrets
-
     # Validate credentials
     if body.username != _ADMIN_USERNAME():
         audit_from_request(request, "LOGIN_FAILED", body.username,
@@ -114,12 +161,9 @@ async def login(body: LoginRequest, request: Request):
 
     # If MFA is enabled, issue a short-lived session token
     if _mfa_enabled():
+        import secrets as _secrets
         session_token = _secrets.token_urlsafe(32)
-        import time
-        _MFA_SESSIONS[session_token] = {
-            "username":   body.username,
-            "expires_at": time.time() + _MFA_SESSION_TTL_SECONDS,
-        }
+        _mfa_session_set(session_token, body.username)
         audit_from_request(request, "MFA_CHALLENGE_ISSUED", body.username,
                             detail="Password OK — MFA required")
         return MFARequiredResponse(session_token=session_token)
@@ -139,20 +183,11 @@ async def login(body: LoginRequest, request: Request):
 @router.post("/mfa/verify", response_model=TokenResponse, summary="Verify TOTP code")
 async def mfa_verify(body: MFAVerifyRequest, request: Request):
     """Step 2: verify the 6-digit TOTP code and return real tokens."""
-    import time
-
-    session = _MFA_SESSIONS.get(body.session_token)
+    session = _mfa_session_get(body.session_token)
     if not session:
         audit_from_request(request, "MFA_FAILED", detail="Invalid session token", success=False)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                             detail="Invalid or expired MFA session.")
-
-    if time.time() > session["expires_at"]:
-        del _MFA_SESSIONS[body.session_token]
-        audit_from_request(request, "MFA_FAILED", session["username"],
-                            detail="MFA session expired", success=False)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="MFA session expired. Please login again.")
 
     if not verify_totp(body.totp_code.strip()):
         audit_from_request(request, "MFA_FAILED", session["username"],
@@ -162,7 +197,7 @@ async def mfa_verify(body: MFAVerifyRequest, request: Request):
 
     # TOTP verified — issue tokens and clear session
     username = session["username"]
-    del _MFA_SESSIONS[body.session_token]
+    _mfa_session_delete(body.session_token)
 
     access  = create_access_token(username)
     refresh, _ = create_refresh_token(username)
