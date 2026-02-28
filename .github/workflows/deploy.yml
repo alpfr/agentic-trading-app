@@ -156,6 +156,8 @@ jobs:
     name: Provision EKS Cluster
     runs-on: ubuntu-latest
     needs: build-and-push
+    outputs:
+      waf_arn: ${{ steps.waf.outputs.waf_arn }}
 
     steps:
       - name: Checkout
@@ -456,6 +458,104 @@ jobs:
           echo "✅ Fluent Bit DaemonSet deployed"
 
 
+      - name: Create WAF Web ACL and attach to ALB
+        id: waf
+        run: |
+          REGION="$AWS_REGION"
+          WAF_NAME="agentic-trading-waf"
+
+          # ── 1. Create Web ACL (idempotent) ────────────────────────────
+          EXISTING_ARN=$(aws wafv2 list-web-acls             --scope REGIONAL             --region "$REGION"             --query "WebACLs[?Name=='${WAF_NAME}'].ARN"             --output text 2>/dev/null)
+
+          if [ -z "$EXISTING_ARN" ] || [ "$EXISTING_ARN" = "None" ]; then
+            echo "Creating WAF Web ACL..."
+            WAF_RESULT=$(aws wafv2 create-web-acl               --name "$WAF_NAME"               --scope REGIONAL               --region "$REGION"               --default-action Allow={}               --visibility-config SampledRequestsEnabled=true,CloudWatchMetricsEnabled=true,MetricName=AgenticTradingWAF               --rules '
+              [
+                {
+                  "Name": "AWSManagedRulesCommonRuleSet",
+                  "Priority": 1,
+                  "OverrideAction": {"None": {}},
+                  "Statement": {
+                    "ManagedRuleGroupStatement": {
+                      "VendorName": "AWS",
+                      "Name": "AWSManagedRulesCommonRuleSet"
+                    }
+                  },
+                  "VisibilityConfig": {
+                    "SampledRequestsEnabled": true,
+                    "CloudWatchMetricsEnabled": true,
+                    "MetricName": "CommonRuleSet"
+                  }
+                },
+                {
+                  "Name": "AWSManagedRulesKnownBadInputsRuleSet",
+                  "Priority": 2,
+                  "OverrideAction": {"None": {}},
+                  "Statement": {
+                    "ManagedRuleGroupStatement": {
+                      "VendorName": "AWS",
+                      "Name": "AWSManagedRulesKnownBadInputsRuleSet"
+                    }
+                  },
+                  "VisibilityConfig": {
+                    "SampledRequestsEnabled": true,
+                    "CloudWatchMetricsEnabled": true,
+                    "MetricName": "KnownBadInputs"
+                  }
+                },
+                {
+                  "Name": "AWSManagedRulesSQLiRuleSet",
+                  "Priority": 3,
+                  "OverrideAction": {"None": {}},
+                  "Statement": {
+                    "ManagedRuleGroupStatement": {
+                      "VendorName": "AWS",
+                      "Name": "AWSManagedRulesSQLiRuleSet"
+                    }
+                  },
+                  "VisibilityConfig": {
+                    "SampledRequestsEnabled": true,
+                    "CloudWatchMetricsEnabled": true,
+                    "MetricName": "SQLiRuleSet"
+                  }
+                },
+                {
+                  "Name": "RateLimitRule",
+                  "Priority": 4,
+                  "Action": {"Block": {}},
+                  "Statement": {
+                    "RateBasedStatement": {
+                      "Limit": 2000,
+                      "AggregateKeyType": "IP"
+                    }
+                  },
+                  "VisibilityConfig": {
+                    "SampledRequestsEnabled": true,
+                    "CloudWatchMetricsEnabled": true,
+                    "MetricName": "RateLimit"
+                  }
+                }
+              ]'               --output json)
+
+            WAF_ARN=$(echo "$WAF_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['Summary']['ARN'])")
+            echo "✅ WAF Web ACL created: $WAF_ARN"
+          else
+            WAF_ARN="$EXISTING_ARN"
+            echo "ℹ️  WAF Web ACL already exists: $WAF_ARN"
+          fi
+
+          # ── 2. Store WAF ARN for use in ingress annotation ─────────────
+          echo "WAF_ARN=$WAF_ARN" >> $GITHUB_ENV
+          echo "waf_arn=$WAF_ARN" >> $GITHUB_OUTPUT
+          echo "✅ WAF ARN stored: $WAF_ARN"
+
+          # ── 3. Enable WAF logging to CloudWatch ────────────────────────
+          LOG_GROUP_ARN=$(aws logs describe-log-groups             --log-group-name-prefix "/agentic-trading/eks/application"             --region "$REGION"             --query 'logGroups[0].arn'             --output text | sed 's/:log-group:.*/:log-group:\/agentic-trading\/eks\/application:*/')
+
+          aws wafv2 put-logging-configuration             --logging-configuration "ResourceArn=${WAF_ARN},LogDestinationConfigs=[arn:aws:logs:${REGION}:${AWS_ACCOUNT_ID}:log-group:/agentic-trading/eks/application]"             --region "$REGION" 2>/dev/null || echo "WAF logging config may need manual setup — skipping"
+
+
+
   # ============================================================
   # JOB 4 — Deploy app to EKS
   # ============================================================
@@ -484,6 +584,16 @@ jobs:
       - name: Update kubeconfig
         run: |
           aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
+
+      - name: Fetch WAF ARN
+        run: |
+          # Get WAF ARN from provision job output or look it up directly
+          WAF_ARN="${{ needs.provision-cluster.outputs.waf_arn }}"
+          if [ -z "$WAF_ARN" ] || [ "$WAF_ARN" = "None" ]; then
+            WAF_ARN=$(aws wafv2 list-web-acls               --scope REGIONAL               --region "$AWS_REGION"               --query "WebACLs[?Name=='agentic-trading-waf'].ARN"               --output text 2>/dev/null)
+          fi
+          echo "WAF_ARN=$WAF_ARN" >> $GITHUB_ENV
+          echo "✅ WAF ARN: $WAF_ARN"
 
       - name: Resolve ACM certificate ARN
         id: acm
@@ -704,6 +814,7 @@ jobs:
               alb.ingress.kubernetes.io/ssl-redirect: '443'
               alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
               alb.ingress.kubernetes.io/load-balancer-attributes: routing.http.drop_invalid_header_fields.enabled=true
+              alb.ingress.kubernetes.io/wafv2-acl-arn: ${WAF_ARN}
           spec:
             rules:
             - host: agentictradepulse.opssightai.com
