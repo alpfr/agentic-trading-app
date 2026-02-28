@@ -36,11 +36,11 @@ _JWT_ALGORITHM   = "HS256"
 _ACCESS_TTL_MIN  = int(os.getenv("JWT_ACCESS_TTL_MINUTES", "15"))
 _REFRESH_TTL_DAYS= int(os.getenv("JWT_REFRESH_TTL_DAYS",  "7"))
 _MFA_ISSUER      = os.getenv("MFA_ISSUER", "RetirementAdvisor")
-_ADMIN_USERNAME  = os.getenv("ADMIN_USERNAME", "admin")
+def _ADMIN_USERNAME()  -> str:  return os.getenv("ADMIN_USERNAME", "admin")
 # Admin password hash — generated via /api/setup/hash-password endpoint
-_ADMIN_PASS_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")
+def _ADMIN_PASS_HASH() -> str:  return os.getenv("ADMIN_PASSWORD_HASH", "")
 # Admin TOTP secret — generated once, stored in K8s secret
-_ADMIN_TOTP_KEY  = os.getenv("ADMIN_TOTP_SECRET", "")
+def _ADMIN_TOTP_KEY()  -> str:  return os.getenv("ADMIN_TOTP_SECRET", "")
 
 # ── In-memory revocation list (swap for Redis in multi-replica prod) ───────
 _REVOKED_TOKENS: set = set()   # stores jti (JWT ID) of invalidated tokens
@@ -123,10 +123,10 @@ def get_totp_provisioning_uri(secret: str, username: str) -> str:
 def verify_totp(code: str, secret: Optional[str] = None) -> bool:
     """
     Verifies a 6-digit TOTP code.
-    Uses _ADMIN_TOTP_KEY by default (from K8s secret).
+    Uses _ADMIN_TOTP_KEY() by default (from K8s secret).
     window=1 allows 30s clock drift.
     """
-    s = secret or _ADMIN_TOTP_KEY
+    s = secret or _ADMIN_TOTP_KEY()
     if not s:
         logger.error("AUTH | totp_secret_missing — set ADMIN_TOTP_SECRET in K8s secret")
         return False

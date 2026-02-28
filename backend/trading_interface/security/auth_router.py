@@ -94,19 +94,19 @@ async def login(body: LoginRequest, request: Request):
     import secrets as _secrets
 
     # Validate credentials
-    if body.username != _ADMIN_USERNAME:
+    if body.username != _ADMIN_USERNAME():
         audit_from_request(request, "LOGIN_FAILED", body.username,
                             detail="Unknown username", success=False)
         # Constant-time response — don't reveal whether username exists
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                             detail="Invalid username or password.")
 
-    if not _ADMIN_PASS_HASH:
+    if not _ADMIN_PASS_HASH():
         # Dev mode — no password hash set → allow access with warning
         logger.warning("AUTH | no password hash set — dev mode login accepted")
         audit_from_request(request, "LOGIN_SUCCESS", body.username,
                             detail="dev-mode (no password hash configured)")
-    elif not verify_password(body.password, _ADMIN_PASS_HASH):
+    elif not verify_password(body.password, _ADMIN_PASS_HASH()):
         audit_from_request(request, "LOGIN_FAILED", body.username,
                             detail="Wrong password", success=False)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
