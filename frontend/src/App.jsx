@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Shield, ShieldAlert, Activity, PieChart, Info, Database, BarChart3, TrendingUp, TrendingDown, Settings2, Play, PlayCircle, XCircle, Search, Lightbulb, Star } from 'lucide-react';
 import { AdvancedRealTimeChart } from "react-ts-tradingview-widgets";
 import './index.css';
+import './App.css';
 
 // ---------------------------------------------------------------------------
 // Config — driven by Vite env vars so this never needs to be hardcoded.
@@ -19,6 +20,8 @@ const api = axios.create({
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const setTab = (tab) => { setActiveTab(tab); setMobileMoreOpen(false); };
   const [isLiveMode, _setIsLiveMode] = useState(false);
 
   // State driven by SSE stream
@@ -231,9 +234,9 @@ export default function App() {
   });
 
   return (
-    <div style={{ display: 'flex', height: '100vh', width: '100vw', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', height: '100vh', width: '100vw', overflow: 'hidden', position: 'relative' }}>
       {/* SIDEBAR */}
-      <nav style={{ width: '260px', background: 'var(--bg-panel)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
+      <nav className="sidebar-desktop" style={{ width: '260px', background: 'var(--bg-panel)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '24px', borderBottom: '1px solid var(--border)' }}>
           <h1 style={{ fontSize: '20px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Activity color="var(--primary)" size={24} />
@@ -285,14 +288,14 @@ export default function App() {
       </nav>
 
       {/* MAIN CONTENT */}
-      <main style={{ flex: 1, overflowY: 'auto', background: 'var(--bg-dark)', padding: '32px 48px' }}>
-        <header className="animate-fade-in" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }}>
+      <main className="main-content" style={{ flex: 1, overflowY: 'auto', background: 'var(--bg-dark)', padding: '32px 48px' }}>
+        <header className="animate-fade-in page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }}>
           <div>
             <h2 style={{ fontSize: '28px', fontWeight: 600 }}>Retirement Portfolio</h2>
             <p style={{ color: 'var(--text-muted)', fontSize: '14px', marginTop: '4px' }}>Retirement portfolio advisor — 5–10 year horizon · paper trading.</p>
           </div>
-          <div style={{ display: 'flex', gap: '24px' }}>
-            <div style={{ padding: '16px 20px', background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: '12px' }}>
+          <div className="page-header-actions" style={{ display: 'flex', gap: '24px' }}>
+            <div className="ticker-input-row" style={{ padding: '16px 20px', background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: '12px' }}>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, marginBottom: '8px' }}>Analyze Ticker</p>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <input type="text" value={targetTicker} onChange={(e) => setTargetTicker(e.target.value.toUpperCase().replace(/[^A-Z]/g, ''))}
@@ -338,7 +341,7 @@ export default function App() {
             </div>
 
             {/* Ticker cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+            <div className="watchlist-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
               {watchlist.map(ticker => {
                 const d = watchlistData[ticker];
                 const price = d?.price || d?.regularMarketPrice || null;
@@ -437,10 +440,10 @@ export default function App() {
         )}
 
         {activeTab === 'dashboard' && (
-          <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px' }}>
+          <div className="animate-fade-in dashboard-grid" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px' }}>
             <section className="glass-panel" style={{ padding: '24px' }}>
               <h3 style={{ fontSize: '18px', fontWeight: 500, borderBottom: '1px solid var(--border)', paddingBottom: '16px', marginBottom: '16px' }}>Holdings (Paper)</h3>
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+              <div className="table-scroll"><table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '500px' }}>
                 <thead>
                   <tr style={{ color: 'var(--text-dark)', fontSize: '12px', textTransform: 'uppercase' }}>
                     <th style={{ paddingBottom: '12px' }}>Asset</th><th style={{ paddingBottom: '12px' }}>Side</th>
@@ -467,7 +470,7 @@ export default function App() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             </section>
 
             <section className="glass-panel" style={{ padding: '24px' }}>
@@ -564,7 +567,7 @@ export default function App() {
         {activeTab === 'quote' && (
           <div className="animate-fade-in glass-panel" style={{ padding: '24px' }}>
             <h3 style={{ fontSize: '18px', fontWeight: 500, borderBottom: '1px solid var(--border)', paddingBottom: '16px', marginBottom: '16px' }}>Stock Quote & Research</h3>
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
+            <div className="quote-search-row" style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
               <input type="text" value={quoteTicker} onChange={(e) => setQuoteTicker(e.target.value.toUpperCase().replace(/[^A-Z]/g, ''))}
                 placeholder="Ticker (e.g. AAPL)" onKeyDown={(e) => e.key === 'Enter' && lookupQuote()}
                 style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: '#fff', padding: '10px 16px', borderRadius: '8px', flex: 1, maxWidth: '250px', outline: 'none' }} />
@@ -575,7 +578,7 @@ export default function App() {
             </div>
             {quoteData && (
               <div className="animate-fade-in" style={{ background: 'rgba(255,255,255,0.02)', padding: '24px', borderRadius: '12px', border: '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+                <div className="quote-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
                   <div>
                     <h2 style={{ fontSize: '28px', fontWeight: 700, margin: '0 0 4px 0' }}>{quoteData.ticker} <span style={{ fontSize: '18px', color: 'var(--text-muted)', fontWeight: 400, marginLeft: '8px' }}>{quoteData.name}</span></h2>
                     <p style={{ color: 'var(--text-muted)', fontSize: '14px', margin: 0 }}>{quoteData.sector} • {quoteData.industry}</p>
@@ -599,7 +602,7 @@ export default function App() {
                 {moversLoading ? 'Refreshing...' : 'Refresh'}
               </button>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '24px' }}>
+            <div className="movers-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '24px' }}>
               {[['gainers', 'var(--success)', 'Top Gainers'], ['losers', 'var(--danger)', 'Top Losers'], ['actives', 'var(--primary)', 'Most Active']].map(([key, color, title]) => (
                 <div key={key}>
                   <h4 style={{ color, fontWeight: 600, marginBottom: '16px' }}>{title}</h4>
@@ -790,6 +793,42 @@ export default function App() {
           </p>
         </footer>
       </main>
+    
+      {/* ── MOBILE BOTTOM NAV ─────────────────────────────────────────── */}
+      <nav className="mobile-nav">
+        <button className={`mobile-nav-btn ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setTab('dashboard')}>
+          <PieChart size={20} /><span>Portfolio</span>
+        </button>
+        <button className={`mobile-nav-btn ${activeTab === 'watchlist' ? 'active' : ''}`} onClick={() => setTab('watchlist')}>
+          <Star size={20} /><span>Watchlist</span>
+        </button>
+        <button className={`mobile-nav-btn ${activeTab === 'rebalance' ? 'active' : ''}`} onClick={() => setTab('rebalance')}>
+          <BarChart3 size={20} /><span>Rebalance</span>
+        </button>
+        <button className={`mobile-nav-btn ${activeTab === 'alerts' ? 'active' : ''}`} onClick={() => { setTab('alerts'); fetchAlerts(); }}>
+          <Lightbulb size={20} /><span>Alerts</span>
+        </button>
+        <button className={`mobile-nav-btn ${mobileMoreOpen ? 'active' : ''}`} onClick={() => setMobileMoreOpen(o => !o)}>
+          <Settings2 size={20} /><span>More</span>
+        </button>
+      </nav>
+
+      {/* ── MOBILE MORE MENU ──────────────────────────────────────────── */}
+      <div className={`mobile-more-menu ${mobileMoreOpen ? 'open' : ''}`}>
+        <button className={`mobile-nav-btn ${activeTab === 'dividends' ? 'active' : ''}`} style={{ flexDirection: 'row', justifyContent: 'flex-start', gap: '12px', padding: '12px 16px', fontSize: '14px' }} onClick={() => setTab('dividends')}>
+          <TrendingUp size={18} /><span>Dividends</span>
+        </button>
+        <button className={`mobile-nav-btn ${activeTab === 'insights' ? 'active' : ''}`} style={{ flexDirection: 'row', justifyContent: 'flex-start', gap: '12px', padding: '12px 16px', fontSize: '14px' }} onClick={() => setTab('insights')}>
+          <Search size={18} /><span>AI Advisor</span>
+        </button>
+        <button className={`mobile-nav-btn ${activeTab === 'quote' ? 'active' : ''}`} style={{ flexDirection: 'row', justifyContent: 'flex-start', gap: '12px', padding: '12px 16px', fontSize: '14px' }} onClick={() => setTab('quote')}>
+          <Settings2 size={18} /><span>Research</span>
+        </button>
+        <button className={`mobile-nav-btn ${activeTab === 'audit' ? 'active' : ''}`} style={{ flexDirection: 'row', justifyContent: 'flex-start', gap: '12px', padding: '12px 16px', fontSize: '14px' }} onClick={() => setTab('audit')}>
+          <Database size={18} /><span>Audit Log</span>
+        </button>
+      </div>
+
     </div>
   );
 }

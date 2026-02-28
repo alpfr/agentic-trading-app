@@ -1,42 +1,180 @@
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+/* ── Mobile Responsive Overrides ─────────────────────────────────────────── */
+
+/* Mobile bottom nav */
+.mobile-nav {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  z-index: 100;
+  padding: 0 4px;
+  align-items: center;
+  justify-content: space-around;
+  gap: 2px;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+.mobile-nav-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 500;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+  transition: color 0.15s;
 }
 
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
+.mobile-nav-btn.active {
+  color: var(--primary);
+}
+
+.mobile-nav-btn svg {
+  flex-shrink: 0;
+}
+
+/* Mobile more menu */
+.mobile-more-menu {
+  display: none;
+  position: fixed;
+  bottom: 64px;
+  left: 0;
+  right: 0;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  border-radius: 16px 16px 0 0;
+  z-index: 99;
+  padding: 16px 12px;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: 0 -8px 32px rgba(0,0,0,0.4);
+}
+
+.mobile-more-menu.open {
+  display: flex;
+}
+
+.sidebar-desktop {
+  display: flex;
+}
+
+@media (max-width: 768px) {
+  .sidebar-desktop {
+    display: none !important;
   }
-  to {
-    transform: rotate(360deg);
+
+  .mobile-nav {
+    display: flex;
   }
-}
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
+  .main-content {
+    padding: 16px !important;
+    padding-bottom: 76px !important;
   }
-}
 
-.card {
-  padding: 2em;
-}
+  .page-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+    margin-bottom: 20px !important;
+  }
 
-.read-the-docs {
-  color: #888;
+  .page-header-actions {
+    flex-direction: column !important;
+    width: 100% !important;
+    gap: 10px !important;
+  }
+
+  .stat-card-row {
+    width: 100% !important;
+  }
+
+  .ticker-input-row {
+    width: 100% !important;
+  }
+
+  /* Watchlist grid — 1 col on mobile */
+  .watchlist-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Dashboard grid — stack on mobile */
+  .dashboard-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Movers grid — stack on mobile */
+  .movers-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Rebalance rows — stack */
+  .rebalance-row {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+  }
+
+  .rebalance-row-action {
+    grid-column: 1 / -1;
+  }
+
+  /* Dividends table — hide less important cols */
+  .dividend-row {
+    grid-template-columns: 60px 60px 70px 80px !important;
+  }
+
+  .dividend-row .hide-mobile {
+    display: none !important;
+  }
+
+  /* Tables — make scrollable */
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Quote page */
+  .quote-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 8px !important;
+  }
+
+  .quote-search-row {
+    flex-direction: column !important;
+  }
+
+  .quote-search-row input {
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+
+  /* Insight cards */
+  .insight-header {
+    flex-direction: column !important;
+    gap: 12px !important;
+  }
+
+  /* General panels */
+  .glass-panel {
+    border-radius: 12px !important;
+  }
+
+  h2 {
+    font-size: 20px !important;
+  }
+
+  h3 {
+    font-size: 16px !important;
+  }
 }
