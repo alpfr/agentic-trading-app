@@ -587,10 +587,17 @@ jobs:
 
       - name: Fetch WAF ARN
         run: |
-          # Get WAF ARN from provision job output or look it up directly
-          WAF_ARN="${{ needs.provision-cluster.outputs.waf_arn }}"
+          # Prefer pinned secret, fall back to job output, then live lookup
+          WAF_ARN="${{ secrets.WAF_ARN }}"
           if [ -z "$WAF_ARN" ] || [ "$WAF_ARN" = "None" ]; then
-            WAF_ARN=$(aws wafv2 list-web-acls               --scope REGIONAL               --region "$AWS_REGION"               --query "WebACLs[?Name=='agentic-trading-waf'].ARN"               --output text 2>/dev/null)
+            WAF_ARN="${{ needs.provision-cluster.outputs.waf_arn }}"
+          fi
+          if [ -z "$WAF_ARN" ] || [ "$WAF_ARN" = "None" ]; then
+            WAF_ARN=$(aws wafv2 list-web-acls \
+              --scope REGIONAL \
+              --region "$AWS_REGION" \
+              --query "WebACLs[?Name=='agentic-trading-waf'].ARN" \
+              --output text 2>/dev/null)
           fi
           echo "WAF_ARN=$WAF_ARN" >> $GITHUB_ENV
           echo "✅ WAF ARN: $WAF_ARN"
