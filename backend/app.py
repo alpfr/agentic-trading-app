@@ -1015,16 +1015,3 @@ async def event_stream():
     return StreamingResponse(generator(), media_type="text/event-stream")
 
 
-# ── TEMPORARY: one-time password hash generator — REMOVE AFTER USE ─────────
-@app.get("/api/setup/hash-password", include_in_schema=False)
-async def hash_password_once(password: str, token: str = ""):
-    """
-    ONE-TIME USE — generates a bcrypt hash for admin password setup.
-    Requires ?token= to match SETUP_TOKEN env var.
-    """
-    import os
-    setup_token = os.getenv("SETUP_TOKEN", "")
-    if not setup_token or token != setup_token:
-        raise HTTPException(status_code=404, detail="Not found")
-    from trading_interface.security import hash_password
-    return {"hash": hash_password(password)}
