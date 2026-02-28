@@ -42,8 +42,28 @@ def _ADMIN_PASS_HASH() -> str:  return os.getenv("ADMIN_PASSWORD_HASH", "")
 # Admin TOTP secret — generated once, stored in K8s secret
 def _ADMIN_TOTP_KEY()  -> str:  return os.getenv("ADMIN_TOTP_SECRET", "")
 
-# ── In-memory revocation list (swap for Redis in multi-replica prod) ───────
-_REVOKED_TOKENS: set = set()   # stores jti (JWT ID) of invalidated tokens
+# ── Token revocation — Redis-backed with in-memory fallback ───────────────
+_REVOKED_TOKENS_FALLBACK: set = set()   # used only if Redis is unavailable
+_redis_client = None
+
+def _get_redis():
+    """Lazy Redis connection — falls back to in-memory set if unavailable."""
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+    redis_url = os.getenv("REDIS_URL", "")
+    if not redis_url:
+        return None
+    try:
+        import redis as _redis_lib
+        client = _redis_lib.from_url(redis_url, decode_responses=True, socket_connect_timeout=2)
+        client.ping()
+        _redis_client = client
+        logger.info("AUTH | redis_connected | token revocation backed by Redis")
+        return _redis_client
+    except Exception as e:
+        logger.warning(f"AUTH | redis_unavailable | falling back to in-memory | {e}")
+        return None
 
 # ── Ticker validation ──────────────────────────────────────────────────────
 _VALID_TICKER_RE = re.compile(r"^[A-Z]{1,5}$")
@@ -93,16 +113,32 @@ def decode_token(token: str) -> dict:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                             detail="Token invalid or expired.",
                             headers={"WWW-Authenticate": "Bearer"})
-    if payload.get("jti") in _REVOKED_TOKENS:
-        logger.warning(f"AUTH | token_revoked | jti={payload.get('jti')}")
+    jti = payload.get("jti")
+    r = _get_redis()
+    if r:
+        if r.exists(f"revoked:{jti}"):
+            logger.warning(f"AUTH | token_revoked | backend=redis | jti={jti}")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                                detail="Token has been revoked.")
+    elif jti in _REVOKED_TOKENS_FALLBACK:
+        logger.warning(f"AUTH | token_revoked | backend=memory | jti={jti}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                             detail="Token has been revoked.")
     return payload
 
 
-def revoke_token(jti: str):
-    _REVOKED_TOKENS.add(jti)
-    logger.info(f"AUTH | token_revoked | jti={jti}")
+def revoke_token(jti: str, ttl_seconds: int = int(_REFRESH_TTL_DAYS * 86400)):
+    """Revoke a token by JTI. Persists in Redis with TTL matching token expiry."""
+    r = _get_redis()
+    if r:
+        try:
+            r.setex(f"revoked:{jti}", ttl_seconds, "1")
+            logger.info(f"AUTH | token_revoked | backend=redis | jti={jti} ttl={ttl_seconds}s")
+            return
+        except Exception as e:
+            logger.warning(f"AUTH | redis_write_failed | falling back to memory | {e}")
+    _REVOKED_TOKENS_FALLBACK.add(jti)
+    logger.info(f"AUTH | token_revoked | backend=memory | jti={jti}")
 
 
 # ══════════════════════════════════════════════════════════════════════════

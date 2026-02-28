@@ -556,6 +556,89 @@ jobs:
 
 
 
+
+      - name: Deploy Redis for token revocation
+        run: |
+          NAMESPACE="$NAMESPACE"
+
+          kubectl apply -f - << 'REDISEOF'
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: redis
+            namespace: agentic-trading-platform
+            labels:
+              app: redis
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: redis
+            template:
+              metadata:
+                labels:
+                  app: redis
+              spec:
+                containers:
+                  - name: redis
+                    image: redis:7-alpine
+                    ports:
+                      - containerPort: 6379
+                    command: ["redis-server", "--requirepass", "$(REDIS_PASSWORD)", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+                    env:
+                      - name: REDIS_PASSWORD
+                        valueFrom:
+                          secretKeyRef:
+                            name: trading-app-secrets
+                            key: redis-password
+                    resources:
+                      requests:
+                        cpu: 50m
+                        memory: 64Mi
+                      limits:
+                        memory: 192Mi
+                    readinessProbe:
+                      exec:
+                        command: ["redis-cli", "-a", "$(REDIS_PASSWORD)", "ping"]
+                      initialDelaySeconds: 5
+                      periodSeconds: 10
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: redis
+            namespace: agentic-trading-platform
+          spec:
+            selector:
+              app: redis
+            ports:
+              - port: 6379
+                targetPort: 6379
+          REDISEOF
+          echo "✅ Redis deployed"
+
+          # Generate and store Redis password if not already set
+          EXISTING=$(kubectl get secret trading-app-secrets -n agentic-trading-platform \
+            -o jsonpath='{.data.redis-password}' 2>/dev/null | base64 -d)
+          if [ -z "$EXISTING" ]; then
+            REDIS_PASS=$(openssl rand -hex 24)
+            kubectl patch secret trading-app-secrets -n agentic-trading-platform \
+              --type='json' \
+              -p="[{\"op\":\"add\",\"path\":\"/data/redis-password\",\"value\":\"$(echo -n $REDIS_PASS | base64)\"}]"
+            echo "✅ Redis password stored in K8s secret"
+          else
+            REDIS_PASS="$EXISTING"
+            echo "ℹ️  Redis password already exists"
+          fi
+
+          # Build REDIS_URL and store it
+          REDIS_URL="redis://:${REDIS_PASS}@redis.agentic-trading-platform.svc.cluster.local:6379/0"
+          kubectl patch secret trading-app-secrets -n agentic-trading-platform \
+            --type='json' \
+            -p="[{\"op\":\"add\",\"path\":\"/data/redis-url\",\"value\":\"$(echo -n $REDIS_URL | base64)\"}]"
+          echo "✅ REDIS_URL stored in K8s secret"
+
+
   # ============================================================
   # JOB 4 — Deploy app to EKS
   # ============================================================
@@ -709,6 +792,12 @@ jobs:
                       secretKeyRef:
                         name: trading-app-secrets
                         key: admin-totp-secret
+                        optional: true
+                  - name: REDIS_URL
+                    valueFrom:
+                      secretKeyRef:
+                        name: trading-app-secrets
+                        key: redis-url
                         optional: true
                   livenessProbe:
                     httpGet:

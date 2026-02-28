@@ -52,3 +52,4 @@ python-jose[cryptography]==3.5.0
 pyotp==2.9.0
 passlib[bcrypt]==1.7.4
 slowapi==0.1.9
+redis>=5.0.0
