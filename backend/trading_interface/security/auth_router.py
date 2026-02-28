@@ -53,7 +53,9 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 _MFA_SESSIONS: dict = {}
 _MFA_SESSION_TTL_SECONDS = 300   # 5-minute window to enter TOTP code
 
-MFA_ENABLED = bool(_ADMIN_TOTP_KEY)
+def _mfa_enabled() -> bool:
+    """Check at request time so secret updates take effect after restart."""
+    return bool(os.getenv("ADMIN_TOTP_SECRET", ""))
 
 
 # ── Request/Response models ────────────────────────────────────────────────
@@ -111,7 +113,7 @@ async def login(body: LoginRequest, request: Request):
                             detail="Invalid username or password.")
 
     # If MFA is enabled, issue a short-lived session token
-    if MFA_ENABLED:
+    if _mfa_enabled():
         session_token = _secrets.token_urlsafe(32)
         import time
         _MFA_SESSIONS[session_token] = {
